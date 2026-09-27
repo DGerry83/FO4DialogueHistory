@@ -12,13 +12,13 @@
 #include "Infrastructure/Prisma/PrismaViewBridge.h"
 #include "Infrastructure/Settings/IniSettingsStore.h"
 
-#include "RE/B/BSInputEventUser.h"
-#include "RE/B/ButtonEvent.h"
-#include "RE/C/Console.h"
-#include "RE/L/LoadingMenu.h"
-#include "RE/M/MainMenu.h"
-#include "RE/M/MenuControls.h"
-#include "RE/U/UI.h"
+#include "RE/B/BSInputEventUser.hpp"
+#include "RE/B/ButtonEvent.hpp"
+#include "RE/C/Console.hpp"
+#include "RE/L/LoadingMenu.hpp"
+#include "RE/M/MainMenu.hpp"
+#include "RE/M/MenuControls.hpp"
+#include "RE/U/UI.hpp"
 
 // Process-lifetime object graph, held by function-local statics (F4SE
 // plugins never unload). C5: the INI is parsed once at kGameDataReady and
@@ -45,9 +45,9 @@ namespace F4DH
 			return root;
 		}
 
-		// Edge-triggered keyboard router for the panel hotkey. Registered
-		// with MenuControls for the process lifetime (the fork has no
-		// unregister; F4SE plugins never unload).
+		// Edge-triggered keyboard router for the panel hotkey. Appended to
+		// MenuControls::handlers for the process lifetime (never removed;
+		// F4SE plugins never unload).
 		class InputSink final : public RE::BSInputEventUser
 		{
 		public:
@@ -62,9 +62,9 @@ namespace F4DH
 				}
 				// Inert while the console, main menu, or loading screen is up.
 				if (const auto ui = RE::UI::GetSingleton()) {
-					if (ui->GetMenuOpen<RE::Console>() ||
-						ui->GetMenuOpen<RE::MainMenu>() ||
-						ui->GetMenuOpen<RE::LoadingMenu>()) {
+					if (ui->IsMenuOpen<RE::Console>() ||
+						ui->IsMenuOpen<RE::MainMenu>() ||
+						ui->IsMenuOpen<RE::LoadingMenu>()) {
 						return;
 					}
 				}
@@ -110,7 +110,10 @@ namespace F4DH
 		Application::ViewController::SetCloseTarget(&viewController);
 
 		if (const auto menuControls = RE::MenuControls::GetSingleton()) {
-			menuControls->RegisterHandler(&inputSink);
+			// The AV fork exposes no RegisterHandler engine wrapper; the
+			// handlers array is the registration point. Appended for the
+			// process lifetime (no removal — F4SE plugins never unload).
+			menuControls->handlers.push_back(&inputSink);
 			root.log.Info("hotkey input sink registered");
 		} else {
 			root.log.Error("MenuControls unavailable — panel hotkey disabled");

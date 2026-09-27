@@ -3,13 +3,7 @@
 #include <functional>
 #include <utility>
 
-#include "REX/LOG.h"
-
-// <Windows.h> (pulled in by PrismaUI_F4_API.h) defines an ERROR macro that
-// collides with REX::ERROR.
-#ifdef ERROR
-#	undef ERROR
-#endif
+#include "REX/Log.hpp"
 
 // PrismaUI F4 bridge (runtime-resolved via RequestPluginAPI — never linked).
 // Threading: JS listener callbacks and any off-game-thread caller are
@@ -48,7 +42,7 @@ namespace F4DH::Infrastructure
 			}
 			auto* heap = new std::function<void()>(std::move(a_task));
 			if (!g_api->DispatchToGameThread(&InvokeTask, heap)) {
-				REX::ERROR("PrismaViewBridge: DispatchToGameThread failed; operation dropped");
+				REX::LogError("PrismaViewBridge: DispatchToGameThread failed; operation dropped");
 				delete heap;
 			}
 		}
@@ -99,13 +93,13 @@ namespace F4DH::Infrastructure
 		if (!_api) {
 			if (!g_prismaMissingLogged) {
 				g_prismaMissingLogged = true;
-				REX::ERROR("FO4DialogueHistory: PrismaUI F4 not found — UI disabled, capture continuing.");
+				REX::LogError("FO4DialogueHistory: PrismaUI F4 not found — UI disabled, capture continuing.");
 			}
 			return false;
 		}
 
 		if (!_api->IsGameThread()) {
-			Dispatch([this] { Create(); });
+			Dispatch([this] { static_cast<void>(Create()); });
 			return true;  // optimistic; queued work runs in order on the game thread
 		}
 

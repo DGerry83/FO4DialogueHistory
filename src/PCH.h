@@ -1,10 +1,9 @@
 #pragma once
 
-// CommonLibF4 (libxse fork) umbrella headers — RE game classes, F4SE API,
-// REL::ID Address Library support, REX logging.
+// CommonLibF4 (LucaDotGit AV fork) umbrella header — F4SE API, RE game
+// classes, REL::ID Address Library support, REX logging.
 
-#include "F4SE/F4SE.h"
-#include "RE/Fallout.h"
+#include "F4SE/F4SE.hpp"
 
 #include <cstddef>
 #include <cstdint>

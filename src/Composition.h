@@ -6,7 +6,7 @@ namespace F4DH
 	// are instantiated and wired into Application components.
 	namespace Composition
 	{
-		// Called from F4SE messaging (kPostLoad / kDataLoaded phases).
+		// Called from F4SE messaging (kPostLoad / kGameDataReady phases).
 		// Returns false on fatal init failure (hook install, version check).
 		bool InitializePostLoad();
 		bool InitializeDataLoaded();

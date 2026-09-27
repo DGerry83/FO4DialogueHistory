@@ -7,8 +7,8 @@
 #include <string>
 #include <string_view>
 
-#include "REX/LOG.h"
-#include "REX/W32/KERNEL32.h"
+#include "REX/Log.hpp"
+#include "REX/W32/KERNEL32.hpp"
 
 // Reads FO4DialogueHistory.ini from the folder that hosts this DLL
 // (Data/F4SE/Plugins under the game root — resolved via the module path so
@@ -76,7 +76,7 @@ namespace F4DH::Infrastructure
 		const auto path = ResolveIniPath();
 		std::ifstream in(path);
 		if (!in) {
-			REX::WARN(L"FO4DialogueHistory.ini not found ({}); using defaults", path);
+			REX::LogWarning(L"FO4DialogueHistory.ini not found ({}); using defaults", path);
 			return settings;
 		}
 
@@ -115,25 +115,25 @@ namespace F4DH::Infrastructure
 
 			if (key == "hotkey") {
 				if (!ok) {
-					REX::WARN("IniSettingsStore: invalid Hotkey '{}' — keeping default 35", value);
+					REX::LogWarning("IniSettingsStore: invalid Hotkey '{}' — keeping default 35", value);
 				} else {
 					settings.hotkeyScanCode = parsed;
 				}
 			} else if (key == "buffersize") {
 				if (!ok) {
-					REX::WARN("IniSettingsStore: invalid BufferSize '{}' — keeping default 50", value);
+					REX::LogWarning("IniSettingsStore: invalid BufferSize '{}' — keeping default 50", value);
 				} else if (parsed < 10 || parsed > 500) {
 					settings.bufferSize = std::clamp(parsed, 10u, 500u);
-					REX::WARN("IniSettingsStore: BufferSize {} out of range 10-500 — clamped to {}", parsed, settings.bufferSize);
+					REX::LogWarning("IniSettingsStore: BufferSize {} out of range 10-500 — clamped to {}", parsed, settings.bufferSize);
 				} else {
 					settings.bufferSize = parsed;
 				}
 			} else if (key == "fontsize") {
 				if (!ok) {
-					REX::WARN("IniSettingsStore: invalid FontSize '{}' — keeping default 16", value);
+					REX::LogWarning("IniSettingsStore: invalid FontSize '{}' — keeping default 16", value);
 				} else if (parsed < 10 || parsed > 32) {
 					settings.fontSize = static_cast<int>(std::clamp(parsed, 10u, 32u));
-					REX::WARN("IniSettingsStore: FontSize {} out of range 10-32 — clamped to {}", parsed, settings.fontSize);
+					REX::LogWarning("IniSettingsStore: FontSize {} out of range 10-32 — clamped to {}", parsed, settings.fontSize);
 				} else {
 					settings.fontSize = static_cast<int>(parsed);
 				}
