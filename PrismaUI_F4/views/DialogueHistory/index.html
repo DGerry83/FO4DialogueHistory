@@ -6,17 +6,12 @@
 <link rel="stylesheet" href="history.css">
 </head>
 <body>
-<!-- Placeholder shell — real implementation at milestone 4.
-     JS contract with the plugin (see IMPLEMENTATION_PLAN.md §5):
-       plugin -> JS : setHistory(jsonArray)   // full snapshot, oldest first
-                      appendLine(jsonObject)  // one {speaker, kind, text}
-                      closePanel()            // (reserved)
-       JS -> plugin : prisma "requestHistory" listener on DOM ready
-                      prisma "closeRequested" listener on Esc
-     Scroll contract: snap to bottom on open; auto-scroll on append only
-     when the user is already at the bottom. -->
 <div id="panel">
-  <div id="header">Dialogue History</div>
+  <div id="header">
+    <span id="title">Dialogue History</span>
+    <span id="hint">Esc to close</span>
+  </div>
+  <div id="empty">No conversation recorded yet.</div>
   <div id="log"></div>
 </div>
 <script src="history.js"></script>

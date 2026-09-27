@@ -4,13 +4,28 @@
 
 namespace F4DH::Application
 {
+	namespace
+	{
+		ViewController* g_closeTarget{ nullptr };
+
+		void CloseThunk()
+		{
+			if (g_closeTarget) {
+				g_closeTarget->OnCloseRequested();
+			}
+		}
+	}
+
+	void ViewController::SetCloseTarget(ViewController* instance) noexcept
+	{
+		g_closeTarget = instance;
+	}
+
 	ViewController::ViewController(Core::DialogueBuffer& buffer, IViewBridge& bridge) :
 		_buffer(buffer),
 		_bridge(bridge)
 	{
-		_bridge.SetCloseCallback([]() {
-			// wired to the live instance by Composition at milestone 4
-		});
+		_bridge.SetCloseCallback(&CloseThunk);
 	}
 
 	void ViewController::Toggle()

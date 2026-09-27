@@ -22,6 +22,10 @@ namespace F4DH::Application
 		void NotifyLine();   // a new line was recorded; append if Open
 		void OnCloseRequested();  // Esc / JS closeRequested
 
+		// Composition sets the instance the global close thunk routes to
+		// (plain function pointers are instance-unaware).
+		static void SetCloseTarget(ViewController* instance) noexcept;
+
 		[[nodiscard]] ViewState State() const { return _state; }
 
 	private:
