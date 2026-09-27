@@ -17,7 +17,9 @@ namespace F4DH::Infrastructure
 {
 	namespace
 	{
-		constexpr auto kViewPath{ "PrismaUI_F4/views/DialogueHistory/index.html" };
+		// Resolved by PrismaUI as Data/PrismaUI_F4/views/<path> — the
+		// PrismaUI_F4/views prefix must NOT be repeated here.
+		constexpr auto kViewPath{ "DialogueHistory/index.html" };
 
 		// The bridge is a composition-owned singleton. These mirrors let the
 		// plain-function callbacks reach it without header changes.
@@ -27,6 +29,9 @@ namespace F4DH::Infrastructure
 		std::string                      g_snapshotCache;
 		bool                             g_prismaMissingLogged{ false };
 		bool                             g_createResultLogged{ false };
+		// Set by Focus(), cleared by Unfocus()/Hide(); applied in OnDomReady
+		// because PrismaUI silently drops Focus before the DOM is ready.
+		bool                             g_focusPending{ false };
 
 		void InvokeTask(void* a_userdata)
 		{
@@ -70,15 +75,35 @@ namespace F4DH::Infrastructure
 			});
 		}
 
+		void OnConsoleMessage(PrismaView, PRISMA_UI_API::ConsoleMessageLevel a_level, const char* a_message)
+		{
+			switch (a_level) {
+			case PRISMA_UI_API::ConsoleMessageLevel::Error:
+				REX::LogError("[JS] {}", a_message);
+				break;
+			case PRISMA_UI_API::ConsoleMessageLevel::Warning:
+				REX::LogWarning("[JS] {}", a_message);
+				break;
+			default:
+				REX::LogInformation("[JS] {}", a_message);
+				break;
+			}
+		}
+
 		void OnDomReady(PrismaView a_view)
 		{
 			if (!g_api) {
 				return;
 			}
+			g_api->RegisterConsoleCallback(a_view, &OnConsoleMessage);
 			g_api->RegisterJSListener(a_view, "requestHistory", &OnRequestHistory);
 			g_api->RegisterJSListener(a_view, "closeRequested", &OnCloseRequested);
 			g_api->SetViewRole(a_view, PRISMA_UI_API::ViewRole::kPanel);
 			g_api->SetViewOwnsEscape(a_view, true);
+			if (g_focusPending) {
+				g_focusPending = false;
+				g_api->Focus(a_view, false);
+			}
 		}
 	}
 
@@ -146,6 +171,7 @@ namespace F4DH::Infrastructure
 			return;
 		}
 		_api->Hide(_view);
+		g_focusPending = false;
 		REX::LogInformation("PrismaViewBridge: panel hidden");
 	}
 
@@ -158,6 +184,7 @@ namespace F4DH::Infrastructure
 			Dispatch([this] { Focus(); });
 			return;
 		}
+		g_focusPending = true;  // re-applied by OnDomReady if the DOM is not ready yet
 		_api->Focus(_view, false);  // never pause the game
 	}
 
@@ -170,6 +197,7 @@ namespace F4DH::Infrastructure
 			Dispatch([this] { Unfocus(); });
 			return;
 		}
+		g_focusPending = false;
 		_api->Unfocus(_view);
 	}
 
