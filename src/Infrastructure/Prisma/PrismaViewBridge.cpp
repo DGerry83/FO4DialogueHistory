@@ -179,6 +179,7 @@ namespace F4DH::Infrastructure
 		}
 		g_snapshotCache = json;  // replayed by the view's requestHistory listener
 		if (IsHealthy()) {
+			_api->InteropCall(_view, "setFontSize", std::to_string(_fontSize).c_str());
 			_api->InteropCall(_view, "setHistory", json.c_str());
 		}
 	}
@@ -201,6 +202,11 @@ namespace F4DH::Infrastructure
 	{
 		_closeCallback = fn;
 		g_closeCallback = fn;
+	}
+
+	void PrismaViewBridge::SetFontSize(int fontSize) noexcept
+	{
+		_fontSize = fontSize;
 	}
 
 	bool PrismaViewBridge::IsHealthy()

@@ -1,5 +1,7 @@
 #include "Composition.h"
 
+#include <format>
+
 #include "Application/Capture/CapturePipeline.h"
 #include "Application/Input/HotkeyController.h"
 #include "Application/Settings/Settings.h"
@@ -8,6 +10,7 @@
 #include "Infrastructure/Hooks/SubtitleHook.h"
 #include "Infrastructure/Logging/Log.h"
 #include "Infrastructure/Prisma/PrismaViewBridge.h"
+#include "Infrastructure/Settings/IniSettingsStore.h"
 
 #include "RE/B/BSInputEventUser.h"
 #include "RE/B/ButtonEvent.h"
@@ -18,9 +21,12 @@
 #include "RE/U/UI.h"
 
 // Process-lifetime object graph, held by function-local statics (F4SE
-// plugins never unload). M1: log + settings + buffer. C3: view bridge (stub
-// until C4), view controller, capture pipeline, subtitle hook. C5 adds the
-// INI-backed settings store.
+// plugins never unload). C5: the INI is parsed once at kGameDataReady and
+// the whole graph — buffer sized from it, view bridge + controller +
+// pipeline, hotkey + input sink, subtitle hook — builds immediately after,
+// in InitializeDataLoaded. (FallHook installs the same ShowSubtitle prologue
+// hook even earlier, at F4SEPlugin_Load; no subtitle can fire before
+// kGameDataReady.)
 
 namespace F4DH
 {
@@ -29,9 +35,8 @@ namespace F4DH
 		struct CompositionRoot
 		{
 			Infrastructure::Log   log;
-			Application::Settings settings;                    // shipped defaults; INI arrives in C5
-			Core::DialogueBuffer  buffer{ settings.bufferSize };
-			bool                  hookInstalled{ false };
+			Application::Settings settings;  // defaults until the INI load at kGameDataReady
+			bool                  graphReady{ false };
 		};
 
 		CompositionRoot& Root()
@@ -73,21 +78,35 @@ namespace F4DH
 
 	bool Composition::InitializePostLoad()
 	{
+		Root().log.Info("post-load phase reached; object graph builds at game-data-ready (INI load)");
+		return true;
+	}
+
+	bool Composition::InitializeDataLoaded()
+	{
 		auto& root = Root();
 
-		// C4 wires the real PrismaUI bridge; all components are process-
-		// lifetime statics constructed on first call.
-		static Infrastructure::PrismaViewBridge bridge;
-		static Application::ViewController      viewController(root.buffer, bridge);
-		static Application::CapturePipeline     pipeline(root.buffer, viewController, root.log);
-		static Application::HotkeyController    hotkey(root.settings, viewController);
-		static InputSink                        inputSink(hotkey);
-
-		if (root.hookInstalled) {
-			root.log.Info("post-load initialization already complete");
+		if (root.graphReady) {
+			root.log.Info("data-loaded initialization already complete");
 			return true;
 		}
 
+		static Infrastructure::IniSettingsStore settingsStore;
+		root.settings = settingsStore.Load();
+		root.log.Info(std::format(
+			"settings: hotkey={} bufferSize={} fontSize={}",
+			root.settings.hotkeyScanCode,
+			root.settings.bufferSize,
+			root.settings.fontSize));
+
+		static Core::DialogueBuffer                buffer{ root.settings.bufferSize };
+		static Infrastructure::PrismaViewBridge    bridge;
+		static Application::ViewController         viewController(buffer, bridge);
+		static Application::CapturePipeline        pipeline(buffer, viewController, root.log);
+		static Application::HotkeyController       hotkey(root.settings, viewController);
+		static InputSink                           inputSink(hotkey);
+
+		bridge.SetFontSize(root.settings.fontSize);
 		Application::ViewController::SetCloseTarget(&viewController);
 
 		if (const auto menuControls = RE::MenuControls::GetSingleton()) {
@@ -102,14 +121,8 @@ namespace F4DH
 			return false;
 		}
 
-		root.hookInstalled = true;
-		root.log.Info("post-load initialization complete (subtitle hook installed)");
-		return true;
-	}
-
-	bool Composition::InitializeDataLoaded()
-	{
-		Root().log.Info("data-loaded initialization complete");
+		root.graphReady = true;
+		root.log.Info("data-loaded initialization complete (object graph built, subtitle hook installed)");
 		return true;
 	}
 }

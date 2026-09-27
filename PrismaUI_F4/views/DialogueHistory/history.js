@@ -61,6 +61,10 @@ function appendLine(line) {
   }
 }
 
+function setFontSize(size) {
+  document.getElementById("log").style.fontSize = Number(size) + "px";
+}
+
 function dhSend(eventName) {
   if (window.prisma && typeof window.prisma.sendEvent === "function") {
     window.prisma.sendEvent(eventName, "");
