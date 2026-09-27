@@ -51,9 +51,27 @@ namespace F4DH
 		class InputSink final : public RE::BSInputEventUser
 		{
 		public:
-			explicit InputSink(Application::HotkeyController& hotkey) :
-				_hotkey(hotkey)
+			InputSink(Application::HotkeyController& hotkey, Core::ILogger& log, std::uint32_t a_hotkeyScanCode) :
+				_hotkey(hotkey),
+				_log(log),
+				_hotkeyScanCode(a_hotkeyScanCode)
 			{}
+
+			// The dispatcher consults this before delivering; the base
+			// implementation returns false, which left this sink opted out of
+			// every event (C9 hotkey fix). Accept only what OnButtonEvent acts
+			// on — keyboard button events.
+			bool ShouldHandleEvent(const RE::InputEvent* a_event) override
+			{
+				const bool accept = a_event &&
+					a_event->Is(RE::INPUT_EVENT_TYPE::kButton) &&
+					a_event->device == RE::INPUT_DEVICE::kKeyboard;
+				if (accept && !_loggedFirstEvent) {
+					_loggedFirstEvent = true;
+					_log.Info("input: first keyboard button event received");
+				}
+				return accept;
+			}
 
 			void OnButtonEvent(const RE::ButtonEvent* a_event) override
 			{
@@ -68,11 +86,18 @@ namespace F4DH
 						return;
 					}
 				}
-				_hotkey.OnKeyDown(a_event->QIDCode());
+				const auto scanCode = static_cast<std::uint32_t>(a_event->QIDCode());
+				if (scanCode == _hotkeyScanCode) {
+					_log.Info(std::format("input: hotkey matched (scanCode {}), toggling panel", scanCode));
+				}
+				_hotkey.OnKeyDown(scanCode);
 			}
 
 		private:
 			Application::HotkeyController& _hotkey;
+			Core::ILogger&                 _log;
+			std::uint32_t                  _hotkeyScanCode;
+			bool                           _loggedFirstEvent{ false };
 		};
 	}
 
@@ -104,7 +129,7 @@ namespace F4DH
 		static Application::ViewController         viewController(buffer, bridge);
 		static Application::CapturePipeline        pipeline(buffer, viewController, root.log);
 		static Application::HotkeyController       hotkey(root.settings, viewController);
-		static InputSink                           inputSink(hotkey);
+		static InputSink                           inputSink(hotkey, root.log, root.settings.hotkeyScanCode);
 
 		bridge.SetFontSize(root.settings.fontSize);
 		Application::ViewController::SetCloseTarget(&viewController);

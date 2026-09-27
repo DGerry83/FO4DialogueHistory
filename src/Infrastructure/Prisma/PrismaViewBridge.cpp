@@ -26,6 +26,7 @@ namespace F4DH::Infrastructure
 		PrismaViewBridge::CloseCallback  g_closeCallback{ nullptr };
 		std::string                      g_snapshotCache;
 		bool                             g_prismaMissingLogged{ false };
+		bool                             g_createResultLogged{ false };
 
 		void InvokeTask(void* a_userdata)
 		{
@@ -111,6 +112,14 @@ namespace F4DH::Infrastructure
 		}
 
 		_view = _api->CreateView(kViewPath, &OnDomReady);
+		if (!g_createResultLogged) {
+			g_createResultLogged = true;
+			if (_view != 0 && _api->IsValid(_view)) {
+				REX::LogInformation("PrismaViewBridge: CreateView ok ('{}'), IsValid=true", kViewPath);
+			} else {
+				REX::LogError("PrismaViewBridge: CreateView failed or view invalid ('{}')", kViewPath);
+			}
+		}
 		return _view != 0;
 	}
 
@@ -124,6 +133,7 @@ namespace F4DH::Infrastructure
 			return;
 		}
 		_api->Show(_view);
+		REX::LogInformation("PrismaViewBridge: panel shown");
 	}
 
 	void PrismaViewBridge::Hide()
@@ -136,6 +146,7 @@ namespace F4DH::Infrastructure
 			return;
 		}
 		_api->Hide(_view);
+		REX::LogInformation("PrismaViewBridge: panel hidden");
 	}
 
 	void PrismaViewBridge::Focus()
