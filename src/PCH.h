@@ -1,7 +1,10 @@
 #pragma once
 
-// Precompiled header. CommonLibF4/F4SE umbrella includes land here at
-// milestone 1 once the dependency is wired into CMake.
+// CommonLibF4 (libxse fork) umbrella headers — RE game classes, F4SE API,
+// REL::ID Address Library support, REX logging.
+
+#include "F4SE/F4SE.h"
+#include "RE/Fallout.h"
 
 #include <cstddef>
 #include <cstdint>
