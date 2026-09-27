@@ -1,5 +1,7 @@
 #include "Composition.h"
 
+#include <array>
+#include <cstring>
 #include <format>
 
 #include "Application/Capture/CapturePipeline.h"
@@ -45,6 +47,41 @@ namespace F4DH
 			return root;
 		}
 
+		// C10-DIAG (temporary): one-line hex dump of the first 0x40 bytes at the
+		// event pointer (raw memcpy — no AV struct member reads, the whole point
+		// is to compare engine bytes against the NG-lineage layout).
+		[[nodiscard]] std::string HexDumpEvent(const RE::InputEvent* a_event)
+		{
+			std::array<std::byte, 0x40> raw{};
+			std::memcpy(raw.data(), static_cast<const void*>(a_event), raw.size());
+
+			auto dump = std::format("ev={:p}", static_cast<const void*>(a_event));
+			for (std::size_t i = 0; i < raw.size(); ++i) {
+				if (i % 16 == 0) {
+					dump += " |";
+				}
+				dump += std::format(" {:02X}", std::to_integer<unsigned>(raw[i]));
+			}
+			dump += " |";
+			return dump;
+		}
+
+		// C10-DIAG (temporary): true if any 4-byte-aligned dword in 0x28–0x3C
+		// equals 35 (DIK_H) or 0x3F800000 (1.0f) — logs uncapped past the dump cap.
+		[[nodiscard]] bool IsHotkeyCandidate(const RE::InputEvent* a_event)
+		{
+			std::array<std::byte, 0x40> raw{};
+			std::memcpy(raw.data(), static_cast<const void*>(a_event), raw.size());
+			for (std::size_t off = 0x28; off <= 0x3C; off += 4) {
+				std::uint32_t dword{ 0 };
+				std::memcpy(&dword, raw.data() + off, sizeof(dword));
+				if (dword == 35u || dword == 0x3F800000u) {
+					return true;
+				}
+			}
+			return false;
+		}
+
 		// Edge-triggered keyboard router for the panel hotkey. Appended to
 		// MenuControls::handlers for the process lifetime (never removed;
 		// F4SE plugins never unload).
@@ -57,24 +94,42 @@ namespace F4DH
 				_hotkeyScanCode(a_hotkeyScanCode)
 			{}
 
-			// The dispatcher consults this before delivering; the base
-			// implementation returns false, which left this sink opted out of
-			// every event (C9 hotkey fix). Accept only what OnButtonEvent acts
-			// on — keyboard button events.
+			// C10-DIAG (temporary): accept ALL events and raw-dump each one
+			// (capped; hotkey-candidate dwords dump uncapped) to pin the OG
+			// ButtonEvent layout. C9's opt-in comment kept for the fix commit.
 			bool ShouldHandleEvent(const RE::InputEvent* a_event) override
 			{
-				const bool accept = a_event &&
-					a_event->Is(RE::INPUT_EVENT_TYPE::kButton) &&
-					a_event->device == RE::INPUT_DEVICE::kKeyboard;
-				if (accept && !_loggedFirstEvent) {
-					_loggedFirstEvent = true;
-					_log.Info("input: first keyboard button event received");
+				if (a_event) {
+					static std::uint32_t dumpCount{ 0 };
+					if (IsHotkeyCandidate(a_event)) {
+						_log.Info(std::format("input: HOTKEY-CANDIDATE {}", HexDumpEvent(a_event)));
+					} else if (dumpCount < 300) {
+						++dumpCount;
+						_log.Info(std::format("input: dump #{} {}", dumpCount, HexDumpEvent(a_event)));
+					}
+					if (!_loggedFirstEvent) {
+						_loggedFirstEvent = true;
+						_log.Info("input: first input event received");
+					}
 				}
-				return accept;
+				return true;
 			}
 
 			void OnButtonEvent(const RE::ButtonEvent* a_event) override
 			{
+				// C10-DIAG (temporary): raw dump plus AV-interpreted field reads,
+				// logged before any early-return, to compare against the bytes.
+				if (a_event) {
+					_log.Info(std::format(
+						"input: OnButtonEvent {} device={} eventType={} idCode={} value={} held={} justPressed={}",
+						HexDumpEvent(a_event),
+						std::to_underlying(a_event->device.get()),
+						std::to_underlying(a_event->eventType.get()),
+						a_event->QIDCode(),
+						a_event->value,
+						a_event->heldDownSecs,
+						a_event->QJustPressed()));
+				}
 				if (!a_event || a_event->device != RE::INPUT_DEVICE::kKeyboard || !a_event->QJustPressed()) {
 					return;
 				}

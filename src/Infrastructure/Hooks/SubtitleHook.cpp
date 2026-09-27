@@ -147,6 +147,17 @@ namespace
 		// Vanilla behavior first — a failure below must never break subtitles.
 		g_original(a_manager, a_speaker, a_text, a_topicInfo, a_spokenToPlayer);
 
+		// C10-DIAG (temporary): one line per ShowSubtitle call — resolves
+		// C10-H5 (is the capture path firing at all?).
+		{
+			const char*       text = a_text.c_str();
+			const std::string_view snippet = text ?
+				std::string_view{ text }.substr(0, 40) :
+				std::string_view{ "<null>" };
+			REX::LogInformation("SubtitleHook: ShowSubtitle call speaker={:p} text='{}'",
+				static_cast<const void*>(a_speaker), snippet);
+		}
+
 		if (!g_sink) {
 			return;
 		}
