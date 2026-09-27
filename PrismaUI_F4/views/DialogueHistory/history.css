@@ -1,0 +1,40 @@
+/* Dialogue History view — visual system per DESIGN_SPEC.md §6.3.
+ * Placeholder — refined at milestone 4. */
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: transparent;
+  font-family: "Consolas", "Lucida Console", monospace;
+}
+
+#panel {
+  width: 60vw;
+  height: 70vh;
+  margin: 15vh auto;
+  background: rgba(10, 18, 10, 0.85);
+  border: 1px solid #2B5B2B;
+  border-radius: 4px;
+  display: flex;
+  flex-direction: column;
+}
+
+#header {
+  color: #7BFF7B;
+  font-weight: bold;
+  font-variant: small-caps;
+  padding: 6px 10px;
+  border-bottom: 1px solid #2B5B2B;
+}
+
+#log {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 10px;
+  color: #D7FFD7;
+  font-size: 16px; /* overridden by DH_FontSize at milestone 5 */
+  line-height: 1.4;
+}
+
+.line .speaker { color: #7BFF7B; font-weight: bold; }
+.line.player .speaker { color: #FFD866; }
