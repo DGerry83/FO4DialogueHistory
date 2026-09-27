@@ -95,5 +95,10 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
 	F4DH_VERSION_PATCH=${PROJECT_VERSION_PATCH}
 )
 
-enable_testing()
-# add_subdirectory(tests/Core.Tests)  # milestone 2
+# Tests fetch Catch2 via FetchContent; guard keeps plugin builds free of
+# test dependencies (e.g. -DF4DH_BUILD_TESTS=OFF).
+option(F4DH_BUILD_TESTS "Build the Core unit tests (Catch2)" ON)
+if(F4DH_BUILD_TESTS)
+	enable_testing()
+	add_subdirectory(tests/Core.Tests)
+endif()
