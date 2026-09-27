@@ -7,7 +7,6 @@
 
 #include "RE/A/Actor.hpp"
 #include "RE/B/BGSScene.hpp"
-#include "RE/E/ExtraTextDisplayData.hpp"
 #include "RE/F/FormType.hpp"
 #include "RE/M/MenuTopicManager.hpp"
 #include "RE/T/TESNPC.hpp"
@@ -18,11 +17,11 @@
 
 #include <cstring>
 
-// Prologue detour on SubtitleManager::ShowSubtitle (Address Library
-// REL::ID 2249542), the pattern proven by powerof3/FloatingSubtitlesF4 and
-// northaxosky's 1.10.163 port: steal the 5-byte entry into a trampoline
-// continuation that ends in an absolute jump back (REL::Asm::Jump14), and
-// turn the entry into a REL::Asm::Jump5 to the thunk.
+// Prologue detour on SubtitleManager::ShowSubtitle, the pattern proven by
+// powerof3/FloatingSubtitlesF4 and northaxosky's 1.10.163 port: steal the
+// 5-byte entry into a trampoline continuation that ends in an absolute jump
+// back (REL::Asm::Jump14), and turn the entry into a REL::Asm::Jump5 to the
+// thunk.
 //
 // The AV fork's built-in HookJump5/HookCall5 only chain onto targets that
 // already begin with a branch (their old-function lookup decodes the opening
@@ -34,9 +33,16 @@ namespace
 {
 	using ShowSubtitle_t = void(RE::SubtitleManager*, RE::TESObjectREFR*, const RE::BSFixedStringCS&, RE::TESTopicInfo*, bool);
 
-	// Verified present in the 1.10.163 and 1.10.984 Address Library DBs
-	// (design-spec research notes); resolved through the AV fork's REL::Iddb.
-	constexpr REL::Id<> kShowSubtitle{ 2249542 };
+	// Address Library variant ID (AV house pattern, cf. RE/IDs.hpp).
+	//   OG 1.10.163 = 875508  (verified in the user's version-1-10-163-0.bin,
+	//                          offset 0x12b2f70)
+	//   NG 1.10.984 = 2249542
+	//   AE 1.11.191 = 2249542  (reused NG value — UNVERIFIED; user runtime is OG)
+	// AV's Iddb has no soft-failure path: an address lookup of an ID missing
+	// from the installed DB is a hard REX::Fail (TerminateProcess) — the C8
+	// CTD was exactly that. Never collapse this to a single-runtime ID, and
+	// never add an engine call whose OG ID is not verified present.
+	constexpr auto kShowSubtitle = F4SE::CreateVariantId(875508, 2249542, 2249542);
 
 	constexpr std::size_t kStolenBytes{ sizeof(REL::Asm::Jump5) };
 
@@ -100,18 +106,13 @@ namespace
 		value_type _continuation{ nullptr };
 	};
 
-	[[nodiscard]] const char* GetDisplayFullName(RE::TESObjectREFR* a_refr)
-	{
-		// Not wrapped by the AV fork; same engine function the C3 libxse build
-		// called (libxse IDs.h: TESObjectREFR::GetDisplayFullName = 2201126,
-		// OG 1.10.163).
-		using func_t = const char* (RE::TESObjectREFR*);
-		static const auto func = REL::Relocation<func_t>{ REL::Id<>{ 2201126 } };
-		return func(a_refr);
-	}
-
 	[[nodiscard]] const char* ResolveSpeakerName(RE::TESObjectREFR* a_speaker, RE::TESTopicInfo* a_topicInfo)
 	{
+		// OG-safe order (northaxosky's FloatingSubtitlesF4 port): scene-speaker
+		// full name, then the actor base's short name, else no name. No
+		// display-name engine calls: GetDisplayFullName is absent from the OG
+		// Address Library DB (hard Fail) and documented crash-prone on OG
+		// regardless (BSResource::EntryDB::Force).
 		if (a_topicInfo) {
 			if (const auto speakerBase = a_topicInfo->GetSpeaker()) {
 				if (const char* name = speakerBase->GetFullName(); name && name[0] != '\0') {
@@ -120,18 +121,12 @@ namespace
 			}
 		}
 
-		if (!a_speaker) {
-			return nullptr;
-		}
-
-		if (!a_speaker->Is(RE::FormType::kActor) ||
-			(a_speaker->extraList && a_speaker->extraList->HasExtra<RE::ExtraTextDisplayData>())) {
-			return GetDisplayFullName(a_speaker);
-		}
-
-		const auto actor = static_cast<RE::Actor*>(a_speaker);
-		if (const auto npc = actor->GetActorBase()) {
-			return npc->GetShortName();
+		// FormType check doubles as the cast guard.
+		if (a_speaker && a_speaker->Is(RE::FormType::kActor)) {
+			const auto actor = static_cast<RE::Actor*>(a_speaker);
+			if (const auto npc = actor->GetActorBase()) {
+				return npc->GetShortName();
+			}
 		}
 		return nullptr;
 	}
@@ -179,12 +174,10 @@ namespace F4DH::Infrastructure
 			return true;  // idempotent — installed for process lifetime
 		}
 
-		// Degrade to inert (never REX::Fail the game) if the ID is unknown to
-		// the installed Address Library DB.
-		if (kShowSubtitle.GetAddress() == REL::INVALID_ID_ADDRESS) {
-			REX::LogError("SubtitleHook: REL::ID 2249542 unresolved (Address Library DB missing or outdated?)");
-			return false;
-		}
+		// No missing-ID pre-check is possible: AV's Iddb hard-fails
+		// (TerminateProcess) inside any address lookup of an ID absent from
+		// the installed DB, before any comparison could run. Correctness rests
+		// on the variant ID's OG slot being verified (see kShowSubtitle).
 
 		auto& trampoline = REL::GetTrampoline();
 		if (trampoline->IsEmpty()) {
@@ -194,7 +187,7 @@ namespace F4DH::Infrastructure
 		static std::shared_ptr<HookPrologue5> hook;
 		hook = std::make_shared<HookPrologue5>("ShowSubtitle", kShowSubtitle, &thunk);
 		if (!hook->Init()) {
-			REX::LogError("SubtitleHook: failed to install ShowSubtitle detour (REL::ID 2249542)");
+			REX::LogError("SubtitleHook: failed to install ShowSubtitle detour (Address Library)");
 			return false;
 		}
 
@@ -202,12 +195,12 @@ namespace F4DH::Infrastructure
 		// can route into a null continuation.
 		g_original = hook->GetContinuation();
 		if (!hook->Enable()) {
-			REX::LogError("SubtitleHook: failed to enable ShowSubtitle detour (REL::ID 2249542)");
+			REX::LogError("SubtitleHook: failed to enable ShowSubtitle detour (Address Library)");
 			return false;
 		}
 		g_sink = &a_sink;
 
-		REX::LogInformation("SubtitleHook: ShowSubtitle detour installed (REL::ID 2249542)");
+		REX::LogInformation("SubtitleHook: ShowSubtitle detour installed (Address Library)");
 		return true;
 	}
 }

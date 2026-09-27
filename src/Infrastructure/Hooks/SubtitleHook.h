@@ -7,7 +7,8 @@ namespace F4DH::Application
 
 namespace F4DH::Infrastructure
 {
-	// Detours SubtitleManager::ShowSubtitle (Address Library REL::ID 2249542)
+	// Detours SubtitleManager::ShowSubtitle (Address Library variant ID:
+	// OG 875508 / NG 2249542 — see kShowSubtitle in the .cpp)
 	// and translates engine arguments into Core::SubtitleEvent.
 	// Installed once at F4SE kPostLoad; process-lifetime, no teardown.
 	namespace SubtitleHook
