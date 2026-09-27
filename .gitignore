@@ -13,6 +13,9 @@ out/
 # Release packaging
 Releases/
 
+# Local deploy staging
+dist/
+
 # OS noise
 Thumbs.db
 Desktop.ini
