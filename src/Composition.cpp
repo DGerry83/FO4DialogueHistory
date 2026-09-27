@@ -1,8 +1,8 @@
 #include "Composition.h"
 
-#include <array>
-#include <cstring>
 #include <format>
+
+#include <Windows.h>  // MapVirtualKeyW — OG keyMask carries VK codes (C11)
 
 #include "Application/Capture/CapturePipeline.h"
 #include "Application/Input/HotkeyController.h"
@@ -47,39 +47,53 @@ namespace F4DH
 			return root;
 		}
 
-		// C10-DIAG (temporary): one-line hex dump of the first 0x40 bytes at the
-		// event pointer (raw memcpy — no AV struct member reads, the whole point
-		// is to compare engine bytes against the NG-lineage layout).
-		[[nodiscard]] std::string HexDumpEvent(const RE::InputEvent* a_event)
+		// DirectInput extended scan codes: MapVirtualKeyW only maps them when
+		// prefixed with 0xE000 (extended-key flag in the high word).
+		[[nodiscard]] constexpr bool IsExtendedDik(std::uint32_t a_scanCode)
 		{
-			std::array<std::byte, 0x40> raw{};
-			std::memcpy(raw.data(), static_cast<const void*>(a_event), raw.size());
-
-			auto dump = std::format("ev={:p}", static_cast<const void*>(a_event));
-			for (std::size_t i = 0; i < raw.size(); ++i) {
-				if (i % 16 == 0) {
-					dump += " |";
-				}
-				dump += std::format(" {:02X}", std::to_integer<unsigned>(raw[i]));
+			switch (a_scanCode) {
+			case 0x9C:  // DIK_NUMPADENTER
+			case 0x9D:  // DIK_RCONTROL
+			case 0xB5:  // DIK_DIVIDE
+			case 0xB7:  // DIK_RWIN
+			case 0xB8:  // DIK_RMENU
+			case 0xC7:  // DIK_HOME
+			case 0xC8:  // DIK_UP
+			case 0xC9:  // DIK_PRIOR
+			case 0xCB:  // DIK_LEFT
+			case 0xCD:  // DIK_RIGHT
+			case 0xCF:  // DIK_END
+			case 0xD0:  // DIK_DOWN
+			case 0xD1:  // DIK_NEXT
+			case 0xD2:  // DIK_INSERT
+			case 0xD3:  // DIK_DELETE
+				return true;
+			default:
+				return false;
 			}
-			dump += " |";
-			return dump;
 		}
 
-		// C10-DIAG (temporary): true if any 4-byte-aligned dword in 0x28–0x3C
-		// equals 35 (DIK_H) or 0x3F800000 (1.0f) — logs uncapped past the dump cap.
-		[[nodiscard]] bool IsHotkeyCandidate(const RE::InputEvent* a_event)
+		// C11: OG 1.10.163 delivers Windows virtual-key codes in
+		// ButtonEvent.keyMask (empirically confirmed by the C10 diagnostic
+		// dumps — H arrived as 72/0x48); NG/AE deliver DirectInput scan codes.
+		// Translate the configured DIK scan code to its VK equivalent once, on
+		// OG only. The INI setting stays documented as a DirectInput scan code.
+		[[nodiscard]] std::uint32_t ResolveHotkeyMatchCode(std::uint32_t a_scanCode, Core::ILogger& a_log)
 		{
-			std::array<std::byte, 0x40> raw{};
-			std::memcpy(raw.data(), static_cast<const void*>(a_event), raw.size());
-			for (std::size_t off = 0x28; off <= 0x3C; off += 4) {
-				std::uint32_t dword{ 0 };
-				std::memcpy(&dword, raw.data() + off, sizeof(dword));
-				if (dword == 35u || dword == 0x3F800000u) {
-					return true;
-				}
+			if (F4SE::GetRuntimeType() != F4SE::RuntimeType::kOG) {
+				a_log.Info(std::format("hotkey: DIK {} kept as raw scan code (NG/AE runtime)", a_scanCode));
+				return a_scanCode;
 			}
-			return false;
+
+			const auto mappedInput = static_cast<UINT>(IsExtendedDik(a_scanCode) ? (a_scanCode | 0xE000u) : a_scanCode);
+			const auto vk = static_cast<std::uint32_t>(::MapVirtualKeyW(mappedInput, MAPVK_VSC_TO_VK));
+			if (vk == 0) {
+				a_log.Warn(std::format("hotkey: DIK {} has no VK mapping; comparing raw scan code", a_scanCode));
+				return a_scanCode;
+			}
+
+			a_log.Info(std::format("hotkey: DIK {} -> VK {} (OG runtime)", a_scanCode, vk));
+			return vk;
 		}
 
 		// Edge-triggered keyboard router for the panel hotkey. Appended to
@@ -88,48 +102,31 @@ namespace F4DH
 		class InputSink final : public RE::BSInputEventUser
 		{
 		public:
-			InputSink(Application::HotkeyController& hotkey, Core::ILogger& log, std::uint32_t a_hotkeyScanCode) :
+			InputSink(Application::HotkeyController& hotkey, Core::ILogger& log, std::uint32_t a_matchCode, std::uint32_t a_configuredScanCode) :
 				_hotkey(hotkey),
 				_log(log),
-				_hotkeyScanCode(a_hotkeyScanCode)
+				_matchCode(a_matchCode),
+				_configuredScanCode(a_configuredScanCode)
 			{}
 
-			// C10-DIAG (temporary): accept ALL events and raw-dump each one
-			// (capped; hotkey-candidate dwords dump uncapped) to pin the OG
-			// ButtonEvent layout. C9's opt-in comment kept for the fix commit.
+			// The dispatcher consults this before delivering; the base
+			// implementation returns false, which left this sink opted out of
+			// every event (C9 hotkey fix). Accept only what OnButtonEvent acts
+			// on — keyboard button events.
 			bool ShouldHandleEvent(const RE::InputEvent* a_event) override
 			{
-				if (a_event) {
-					static std::uint32_t dumpCount{ 0 };
-					if (IsHotkeyCandidate(a_event)) {
-						_log.Info(std::format("input: HOTKEY-CANDIDATE {}", HexDumpEvent(a_event)));
-					} else if (dumpCount < 300) {
-						++dumpCount;
-						_log.Info(std::format("input: dump #{} {}", dumpCount, HexDumpEvent(a_event)));
-					}
-					if (!_loggedFirstEvent) {
-						_loggedFirstEvent = true;
-						_log.Info("input: first input event received");
-					}
+				const bool accept = a_event &&
+					a_event->Is(RE::INPUT_EVENT_TYPE::kButton) &&
+					a_event->device == RE::INPUT_DEVICE::kKeyboard;
+				if (accept && !_loggedFirstEvent) {
+					_loggedFirstEvent = true;
+					_log.Info("input: first keyboard button event received");
 				}
-				return true;
+				return accept;
 			}
 
 			void OnButtonEvent(const RE::ButtonEvent* a_event) override
 			{
-				// C10-DIAG (temporary): raw dump plus AV-interpreted field reads,
-				// logged before any early-return, to compare against the bytes.
-				if (a_event) {
-					_log.Info(std::format(
-						"input: OnButtonEvent {} device={} eventType={} idCode={} value={} held={} justPressed={}",
-						HexDumpEvent(a_event),
-						std::to_underlying(a_event->device.get()),
-						std::to_underlying(a_event->eventType.get()),
-						a_event->QIDCode(),
-						a_event->value,
-						a_event->heldDownSecs,
-						a_event->QJustPressed()));
-				}
 				if (!a_event || a_event->device != RE::INPUT_DEVICE::kKeyboard || !a_event->QJustPressed()) {
 					return;
 				}
@@ -141,17 +138,22 @@ namespace F4DH
 						return;
 					}
 				}
-				const auto scanCode = static_cast<std::uint32_t>(a_event->QIDCode());
-				if (scanCode == _hotkeyScanCode) {
-					_log.Info(std::format("input: hotkey matched (scanCode {}), toggling panel", scanCode));
+				// C11: on OG the engine code is a VK (translated at init into
+				// _matchCode); on NG/AE it is the raw DIK scan code. Only the
+				// configured DIK code is ever handed down, so the Application
+				// layer never sees VK values.
+				const auto code = static_cast<std::uint32_t>(a_event->QIDCode());
+				if (code == _matchCode) {
+					_log.Info(std::format("input: hotkey matched (code {}), toggling panel", code));
+					_hotkey.OnKeyDown(_configuredScanCode);
 				}
-				_hotkey.OnKeyDown(scanCode);
 			}
 
 		private:
 			Application::HotkeyController& _hotkey;
 			Core::ILogger&                 _log;
-			std::uint32_t                  _hotkeyScanCode;
+			std::uint32_t                  _matchCode;           // DIK on NG/AE, VK on OG
+			std::uint32_t                  _configuredScanCode;  // always DIK (INI value)
 			bool                           _loggedFirstEvent{ false };
 		};
 	}
@@ -184,7 +186,8 @@ namespace F4DH
 		static Application::ViewController         viewController(buffer, bridge);
 		static Application::CapturePipeline        pipeline(buffer, viewController, root.log);
 		static Application::HotkeyController       hotkey(root.settings, viewController);
-		static InputSink                           inputSink(hotkey, root.log, root.settings.hotkeyScanCode);
+		const auto                                 matchCode = ResolveHotkeyMatchCode(root.settings.hotkeyScanCode, root.log);
+		static InputSink                           inputSink(hotkey, root.log, matchCode, root.settings.hotkeyScanCode);
 
 		bridge.SetFontSize(root.settings.fontSize);
 		Application::ViewController::SetCloseTarget(&viewController);
