@@ -1,8 +1,10 @@
 /* FO4 Dialogue History — PrismaUI view.
  * Plugin -> JS: setHistory(array)   full snapshot, oldest first
  *               appendLine(object)  one {speaker, kind, text}
- * JS -> plugin: prisma.sendEvent("requestHistory") on DOM ready
- *               prisma.sendEvent("closeRequested") on Esc
+ * JS -> plugin: window.requestHistory() on DOM ready
+ *               window.closeRequested() on Esc
+ * (RegisterJSListener binds each name as a global window function;
+ * window.prisma has no sendEvent — its emit() routes to Papyrus only.)
  * Scroll contract: snap to bottom on open; auto-scroll on append only
  * when the user is already at the bottom. */
 "use strict";
@@ -38,6 +40,21 @@ function setHistory(lines) {
   dhSetEmptyVisible(lines.length === 0);
 }
 
+/* Deterministic per-NPC speaker color: stable hue from the name hash, so a
+ * given NPC keeps one color within and across conversations. Player lines
+ * keep the CSS gold (.line.player); other kinds keep the Pip-Boy green. */
+function dhNameColor(name) {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) {
+    h = (h * 31 + name.charCodeAt(i)) >>> 0;
+  }
+  let hue = h % 360;
+  if (hue >= 15 && hue <= 75) {
+    hue = (hue + 120) % 360;  // keep clear of the player gold (~45)
+  }
+  return "hsl(" + hue + ", 70%, 65%)";
+}
+
 function appendLine(line) {
   line = dhParse(line, null);
   if (!line || typeof line !== "object") {
@@ -51,6 +68,9 @@ function appendLine(line) {
   const speaker = document.createElement("span");
   speaker.className = "speaker";
   speaker.textContent = line.speaker + ":";
+  if (line.kind === "npc") {
+    speaker.style.color = dhNameColor(String(line.speaker));
+  }
   const text = document.createElement("span");
   text.className = "text";
   text.textContent = " " + line.text;
@@ -66,8 +86,11 @@ function setFontSize(size) {
 }
 
 function dhSend(eventName) {
-  if (window.prisma && typeof window.prisma.sendEvent === "function") {
-    window.prisma.sendEvent(eventName, "");
+  const fn = window[eventName];
+  if (typeof fn === "function") {
+    fn("");
+  } else {
+    console.warn("[DialogueHistory] listener not registered: " + eventName);
   }
 }
 

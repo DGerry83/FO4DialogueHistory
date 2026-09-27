@@ -32,6 +32,9 @@ namespace F4DH::Infrastructure
 		// Set by Focus(), cleared by Unfocus()/Hide(); applied in OnDomReady
 		// because PrismaUI silently drops Focus before the DOM is ready.
 		bool                             g_focusPending{ false };
+		// Set by Show() when the view does not exist yet (first open races the
+		// async create); applied by Create() right after CreateView succeeds.
+		bool                             g_showPending{ false };
 
 		void InvokeTask(void* a_userdata)
 		{
@@ -100,6 +103,11 @@ namespace F4DH::Infrastructure
 			g_api->RegisterJSListener(a_view, "closeRequested", &OnCloseRequested);
 			g_api->SetViewRole(a_view, PRISMA_UI_API::ViewRole::kPanel);
 			g_api->SetViewOwnsEscape(a_view, true);
+			// Deterministic snapshot replay: the view's requestHistory can fire
+			// before the listener is registered, so push the cache directly.
+			if (g_bridge && !g_snapshotCache.empty()) {
+				g_bridge->PushSnapshot(g_snapshotCache);
+			}
 			if (g_focusPending) {
 				g_focusPending = false;
 				g_api->Focus(a_view, false);
@@ -145,16 +153,25 @@ namespace F4DH::Infrastructure
 				REX::LogError("PrismaViewBridge: CreateView failed or view invalid ('{}')", kViewPath);
 			}
 		}
+		if (_view != 0 && g_showPending) {
+			g_showPending = false;
+			_api->Show(_view);
+			REX::LogInformation("PrismaViewBridge: panel shown");
+		}
 		return _view != 0;
 	}
 
 	void PrismaViewBridge::Show()
 	{
-		if (!_api || _view == 0) {
+		if (!_api) {
 			return;
 		}
 		if (!_api->IsGameThread()) {
 			Dispatch([this] { Show(); });
+			return;
+		}
+		if (_view == 0) {
+			g_showPending = true;  // applied by Create() once the view exists
 			return;
 		}
 		_api->Show(_view);
@@ -163,21 +180,25 @@ namespace F4DH::Infrastructure
 
 	void PrismaViewBridge::Hide()
 	{
-		if (!_api || _view == 0) {
+		if (!_api) {
 			return;
 		}
 		if (!_api->IsGameThread()) {
 			Dispatch([this] { Hide(); });
 			return;
 		}
-		_api->Hide(_view);
+		g_showPending = false;
 		g_focusPending = false;
+		if (_view == 0) {
+			return;
+		}
+		_api->Hide(_view);
 		REX::LogInformation("PrismaViewBridge: panel hidden");
 	}
 
 	void PrismaViewBridge::Focus()
 	{
-		if (!_api || _view == 0) {
+		if (!_api) {
 			return;
 		}
 		if (!_api->IsGameThread()) {
@@ -185,12 +206,15 @@ namespace F4DH::Infrastructure
 			return;
 		}
 		g_focusPending = true;  // re-applied by OnDomReady if the DOM is not ready yet
+		if (_view == 0) {
+			return;  // applied after Create() via OnDomReady
+		}
 		_api->Focus(_view, false);  // never pause the game
 	}
 
 	void PrismaViewBridge::Unfocus()
 	{
-		if (!_api || _view == 0) {
+		if (!_api) {
 			return;
 		}
 		if (!_api->IsGameThread()) {
@@ -198,19 +222,25 @@ namespace F4DH::Infrastructure
 			return;
 		}
 		g_focusPending = false;
+		if (_view == 0) {
+			return;
+		}
 		_api->Unfocus(_view);
 	}
 
 	void PrismaViewBridge::PushSnapshot(const std::string& json)
 	{
-		if (!_api || _view == 0) {
+		if (!_api) {
 			return;
 		}
 		if (!_api->IsGameThread()) {
 			Dispatch([this, json] { PushSnapshot(json); });
 			return;
 		}
-		g_snapshotCache = json;  // replayed by the view's requestHistory listener
+		g_snapshotCache = json;  // replayed by OnDomReady and the view's requestHistory listener
+		if (_view == 0) {
+			return;  // cached; first open replays it once the view exists
+		}
 		if (IsHealthy()) {
 			_api->InteropCall(_view, "setFontSize", std::to_string(_fontSize).c_str());
 			_api->InteropCall(_view, "setHistory", json.c_str());
