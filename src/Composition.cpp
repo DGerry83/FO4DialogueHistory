@@ -17,11 +17,7 @@
 
 #include "RE/B/BSInputEventUser.hpp"
 #include "RE/B/ButtonEvent.hpp"
-#include "RE/C/Console.hpp"
-#include "RE/L/LoadingMenu.hpp"
-#include "RE/M/MainMenu.hpp"
 #include "RE/M/MenuControls.hpp"
-#include "RE/U/UI.hpp"
 
 // Process-lifetime object graph, held by function-local statics (F4SE
 // plugins never unload). C5: the INI is parsed once at kGameDataReady and
@@ -151,21 +147,6 @@ namespace F4DH
 
 				if (a_event->device != RE::INPUT_DEVICE::kKeyboard || !a_event->QJustPressed()) {
 					return;
-				}
-				// Inert while the console, main menu, or loading screen is up.
-				if (const auto ui = RE::UI::GetSingleton()) {
-					if (ui->IsMenuOpen<RE::Console>() ||
-						ui->IsMenuOpen<RE::MainMenu>() ||
-						ui->IsMenuOpen<RE::LoadingMenu>()) {
-						if (freshPress) {
-							const char* blocker =
-								ui->IsMenuOpen<RE::Console>() ? "Console" :
-								ui->IsMenuOpen<RE::MainMenu>() ? "MainMenu" :
-								"LoadingMenu";
-							_log.Info(std::format("input: key code={} blocked by open menu ({})", code, blocker));
-						}
-						return;
-					}
 				}
 				// C11: on OG the engine code is a VK (translated at init into
 				// _matchCode); on NG/AE it is the raw DIK scan code. Only the
