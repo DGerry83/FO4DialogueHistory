@@ -1,0 +1,18 @@
+# Local-only agent/workflow artifacts (backed up to a separate private remote)
+AGENTS.md
+.flybywire/
+docs/
+NOTES/
+
+# Build artifacts
+build/
+out/
+.vs/
+*.user
+
+# Release packaging
+Releases/
+
+# OS noise
+Thumbs.db
+Desktop.ini
