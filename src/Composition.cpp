@@ -1,6 +1,5 @@
 #include "Composition.h"
 
-#include <array>
 #include <format>
 
 #include <Windows.h>  // MapVirtualKeyW — OG keyMask carries VK codes (C11)
@@ -128,22 +127,7 @@ namespace F4DH
 					return;
 				}
 
-				// C12 (diagnostic trace): edge-triggered per-physical-press log,
-				// run before any filter so swallowed presses stay visible. The
-				// static down-state is written from whichever thread delivers
-				// input (C10 dumps showed more than one); a racy duplicate/lost
-				// trace line is acceptable — deliberately no locks here.
 				const auto code = static_cast<std::uint32_t>(a_event->QIDCode());
-				const bool down = a_event->value != 0.0f;
-				bool       freshPress{ false };
-				if (a_event->device == RE::INPUT_DEVICE::kKeyboard && code < 256) {
-					static std::array<bool, 256> downState{};
-					freshPress = down && !downState[code];
-					downState[code] = down;
-					if (freshPress) {
-						_log.Info(std::format("input: key down code={} justPressed={}", code, a_event->QJustPressed() ? 1 : 0));
-					}
-				}
 
 				if (a_event->device != RE::INPUT_DEVICE::kKeyboard || !a_event->QJustPressed()) {
 					return;
