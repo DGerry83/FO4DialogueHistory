@@ -7,7 +7,6 @@
 #include "RE/B/BGSQuestInstanceText.hpp"
 #include "RE/B/BGSRefAlias.hpp"
 #include "RE/B/BGSScene.hpp"
-#include "RE/B/BSStringT.hpp"
 #include "RE/B/BSSpinLock.hpp"
 #include "RE/T/TESNPC.hpp"
 #include "RE/T/TESObjectREFR.hpp"
@@ -52,12 +51,15 @@ namespace
 	}
 
 	// Resolves one "<alias=name>" token against the quest's filled aliases.
-	// OG-safe chain only (M7 research): alias array under the read lock is
-	// inline member iteration; GetAliasedRef is OG-verified REL::ID 847223;
-	// the ref's base object is a member read; the actor name comes from the
-	// TESFullName virtual (GetDisplayName/GetDisplayFullName are absent from
-	// the OG Address Library DB and must not be called). The engine call runs
-	// AFTER the read lock is released. Any miss keeps the token verbatim.
+	// OG-safe chain only: alias array under the read lock is inline member
+	// iteration; GetAliasedRef is OG-verified REL::ID 847223 (proven stable
+	// in-session); the ref's base object is a member read; names come from
+	// the TESFullName virtual (GetDisplayName/GetDisplayFullName are absent
+	// from the OG Address Library DB and must not be called;
+	// BGSQuestInstanceText::ParseString — tried in a0998eb — CTD'd on a
+	// radiant-quest conversation despite its ID being present in the OG bin).
+	// The engine call runs AFTER the read lock is released. Any miss keeps
+	// the token verbatim.
 	[[nodiscard]] std::optional<std::string> ResolveAliasName(RE::TESQuest* a_quest, std::string_view a_tokenName)
 	{
 		std::uint32_t    aliasID = 0;
@@ -100,8 +102,49 @@ namespace
 			}
 			return std::nullopt;
 		}
-		if (forcedLoc) {
-			if (const char* name = forcedLoc->GetFullName(); name && name[0] != '\0') {
+
+		// Location alias: forced fill first (M7), then the quest instance
+		// data for conditional fills (what radiant quests actually use).
+		const RE::BGSLocation* loc = forcedLoc;
+		if (!loc) {
+			// Instance text maps aliasID -> the form providing the display
+			// name. All member reads — no engine calls.
+			std::uint32_t nameFormID = 0;
+			for (const auto* instance : a_quest->instanceDataArray) {
+				if (!instance) {
+					continue;
+				}
+				for (const auto& sd : instance->stringDataArray) {
+					if (sd.aliasID == aliasID) {
+						nameFormID = sd.fullNameFormID;
+						break;
+					}
+				}
+				if (nameFormID != 0) {
+					break;
+				}
+			}
+			// aliasedLocMap holds the runtime-filled locations. Its key
+			// semantics are undocumented, so only validated hits are used:
+			// probe fullNameFormID (the hit's own formID must match), else
+			// accept the map's single entry when there is exactly one.
+			if (nameFormID != 0) {
+				const auto it = a_quest->aliasedLocMap.find(nameFormID);
+				if (it != a_quest->aliasedLocMap.end() && it->second &&
+					it->second->Is(RE::FormType::kLocation) && it->second->formID == nameFormID) {
+					loc = it->second;
+				}
+			}
+			if (!loc && a_quest->aliasedLocMap.size() == 1) {
+				const auto it = a_quest->aliasedLocMap.begin();
+				if (it != a_quest->aliasedLocMap.end() && it->second &&
+					it->second->Is(RE::FormType::kLocation)) {
+					loc = it->second;
+				}
+			}
+		}
+		if (loc) {
+			if (const char* name = loc->GetFullName(); name && name[0] != '\0') {
 				return std::string(name);
 			}
 		}
@@ -137,23 +180,13 @@ namespace F4DH::Infrastructure
 		result.questId = quest->formID;
 		if (const char* name = quest->fullName.data(); name && name[0] != '\0') {
 			result.questName = name;
-			// Radiant quests carry raw "<alias=...>" placeholders in fullName.
-			// Preferred: the engine's own substitution (ParseString resolves
-			// conditional fills, ref/loc aliases, globals — exactly what the
-			// pip-boy shows; OG-verified REL::ID 141681). The M7 hand-rolled
-			// chain remains as the fallback when no instance data exists.
+			// Radiant quests carry raw "<alias=...>" placeholders in fullName;
+			// substitute from the quest's alias/instance data (member reads +
+			// one proven engine call). Unresolvable tokens stay verbatim.
 			if (Core::AliasTokens::ContainsToken(result.questName)) {
-				if (!quest->instanceDataArray.empty()) {
-					RE::BSString engineName{ name };
-					RE::BGSQuestInstanceText::ParseString(&engineName, quest, quest->currentInstanceID);
-					if (const char* resolved = engineName.c_str(); resolved && resolved[0] != '\0') {
-						result.questName = resolved;
-					}
-				} else {
-					result.questName = Core::AliasTokens::Substitute(result.questName, [&](std::string_view token) {
-						return ResolveAliasName(quest, token);
-					});
-				}
+				result.questName = Core::AliasTokens::Substitute(result.questName, [&](std::string_view token) {
+					return ResolveAliasName(quest, token);
+				});
 			}
 		} else if (const char* editorID = quest->GetFormEditorID(); editorID && editorID[0] != '\0') {
 			result.questName = editorID;
