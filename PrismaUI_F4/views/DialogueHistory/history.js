@@ -18,7 +18,9 @@
  * most recent line, with "Unattributed" for questId-0 lines (only when such
  * lines exist). Old-DLL payloads without quest fields land in Unattributed.
  * Scroll contract: snap to bottom on open and on selection switch;
- * auto-scroll on append only when the user is already at the bottom. */
+ * auto-scroll on append only when the user is already at the bottom.
+ * M8: the pane separator (#split) drag-resizes the index pane (session-
+ * only, no persistence); quest names in the index word-wrap. */
 "use strict";
 
 function dhParse(value, fallback) {
@@ -259,6 +261,42 @@ function dhStartDrag(mode) {
   };
 }
 
+/* M8 — draggable pane separator. Session-only (not persisted). Same
+ * no-jump pattern as the panel drags: the index pane's CSS defaults
+ * (32% width, 320px max) are pinned to the current rendered px width at
+ * mousedown, then the mouse is followed with per-move clamps so the
+ * dialogue pane always keeps room. */
+const dhMinIndexWidth = 140;
+const dhMinDialogueWidth = 160;
+
+function dhStartSplitDrag(event) {
+  if (event.button !== 0) {
+    return;
+  }
+  const index = document.getElementById("index");
+  const body = document.getElementById("body");
+  if (!index || !body) {
+    return;
+  }
+  const startWidth = index.offsetWidth;
+  const originX = event.clientX;
+  index.style.maxWidth = "none";  // explicit px width takes over from CSS
+  index.style.width = startWidth + "px";
+  event.preventDefault();
+
+  function onMove(moveEvent) {
+    const maxWidth = Math.max(dhMinIndexWidth, body.clientWidth - dhMinDialogueWidth);
+    const width = Math.min(Math.max(dhMinIndexWidth, startWidth + moveEvent.clientX - originX), maxWidth);
+    index.style.width = Math.round(width) + "px";
+  }
+  function onUp() {
+    document.removeEventListener("mousemove", onMove);
+    document.removeEventListener("mouseup", onUp);
+  }
+  document.addEventListener("mousemove", onMove);
+  document.addEventListener("mouseup", onUp);
+}
+
 /* Right pane: re-render the selected bucket and snap to its newest line. */
 function dhRenderLog() {
   const log = document.getElementById("log");
@@ -356,6 +394,10 @@ document.addEventListener("DOMContentLoaded", () => {
   const grip = document.getElementById("grip");
   if (grip) {
     grip.addEventListener("mousedown", dhStartDrag("resize"));
+  }
+  const split = document.getElementById("split");
+  if (split) {
+    split.addEventListener("mousedown", dhStartSplitDrag);
   }
   document.addEventListener("keydown", (event) => {
     // Ultralight reports Escape as "Unidentified" — match by keyCode.

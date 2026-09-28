@@ -73,11 +73,34 @@ html, body {
 
 #index {
   width: 32%;
-  min-width: 180px;
+  min-width: 140px;
   max-width: 320px;
   display: flex;
   flex-direction: column;
-  border-right: 1px solid #2B5B2B;
+  flex: none;
+}
+
+/* M8: draggable pane separator. The drawn line is the ::after; the div
+ * itself is the 6px hit area. The compositor cursor is PrismaUI's, so the
+ * hover state doubles as the affordance. */
+#split {
+  flex: none;
+  width: 6px;
+  cursor: col-resize;
+  user-select: none;
+  position: relative;
+}
+#split::after {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: #2B5B2B;
+}
+#split:hover::after {
+  background: #4C8A4C;
 }
 
 #search {
@@ -131,10 +154,11 @@ html, body {
   color: #D7FFD7;
 }
 
+/* M8: word-wrap so long quest names stay fully readable. Click-to-select
+ * is unaffected — the handler is on the .qentry row. */
 .qname {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: break-word;
+  min-width: 0;
 }
 
 .qcount {
