@@ -9,6 +9,7 @@
 #include "Application/Settings/Settings.h"
 #include "Application/View/ViewController.h"
 #include "Core/Dialogue/DialogueBuffer.h"
+#include "Infrastructure/Cosave/CosaveStore.h"
 #include "Infrastructure/Hooks/SubtitleHook.h"
 #include "Infrastructure/Logging/Log.h"
 #include "Infrastructure/Prisma/PrismaViewBridge.h"
@@ -199,6 +200,10 @@ namespace F4DH
 			root.log.Error("failed to install subtitle hook; plugin inert");
 			return false;
 		}
+
+		// M3: hand the buffer to the cosave store (registered at plugin load).
+		// The serialization callbacks run on the game thread, same as capture.
+		Infrastructure::CosaveStore::Bind(&buffer);
 
 		root.graphReady = true;
 		root.log.Info("data-loaded initialization complete (object graph built, subtitle hook installed)");

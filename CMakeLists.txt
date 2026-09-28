@@ -34,11 +34,13 @@ add_library(${PROJECT_NAME} SHARED
 	src/Plugin.cpp
 	src/Composition.cpp
 	src/Core/Dialogue/PayloadBuilder.cpp
+	src/Core/Dialogue/CosaveCodec.cpp
 	src/Application/Capture/CapturePipeline.cpp
 	src/Application/View/ViewController.cpp
 	src/Application/Input/HotkeyController.cpp
 	src/Infrastructure/Hooks/SubtitleHook.cpp
 	src/Infrastructure/Hooks/QuestResolver.cpp
+	src/Infrastructure/Cosave/CosaveStore.cpp
 	src/Infrastructure/Prisma/PrismaViewBridge.cpp
 	src/Infrastructure/Settings/IniSettingsStore.cpp
 	src/Infrastructure/Logging/Log.cpp

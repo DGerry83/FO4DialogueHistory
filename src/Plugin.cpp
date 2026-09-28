@@ -2,6 +2,8 @@
 
 #include "Composition.h"
 
+#include "Infrastructure/Cosave/CosaveStore.h"
+
 namespace
 {
 	void OnF4SEMessage(F4SE::MessagingInterface::Message* a_msg)
@@ -51,6 +53,11 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 
 	const auto messaging = F4SE::GetMessagingInterface();
 	messaging->RegisterListener(OnF4SEMessage);
+
+	// Cosave registration must happen at plugin load (the interface resolves
+	// the plugin handle internally); the buffer is bound later, at
+	// game-data-ready — the callbacks null-guard until then.
+	F4DH::Infrastructure::CosaveStore::Install();
 
 	REX::LogInformation("{} v{} loaded", F4SE::GetPluginName(), F4SE::GetPluginVersion());
 	return true;

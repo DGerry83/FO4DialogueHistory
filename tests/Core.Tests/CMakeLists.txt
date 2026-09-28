@@ -13,13 +13,15 @@ FetchContent_Declare(catch2
 )
 FetchContent_MakeAvailable(catch2)
 
-# Engine-free: links only Core sources (PayloadBuilder.cpp) plus Catch2.
-# Never link commonlibf4/spdlog here — Core must stay testable in isolation.
+# Engine-free: links only Core sources (PayloadBuilder, CosaveCodec) plus
+# Catch2. Never link commonlibf4/spdlog here — Core must stay testable in isolation.
 add_executable(Core.Tests
 	DialogueBufferTests.cpp
 	ConversationFilterTests.cpp
 	PayloadBuilderTests.cpp
+	CosaveCodecTests.cpp
 	${CMAKE_SOURCE_DIR}/src/Core/Dialogue/PayloadBuilder.cpp
+	${CMAKE_SOURCE_DIR}/src/Core/Dialogue/CosaveCodec.cpp
 )
 
 target_include_directories(Core.Tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
