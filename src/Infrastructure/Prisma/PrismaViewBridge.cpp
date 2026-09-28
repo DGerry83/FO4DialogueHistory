@@ -71,6 +71,7 @@ namespace F4DH::Infrastructure
 		void OnCloseRequested(const char*)
 		{
 			// Fires on PrismaUI's thread; route on the game thread.
+			REX::LogInformation("PrismaViewBridge: closeRequested received from view");
 			Dispatch([] {
 				if (g_closeCallback) {
 					g_closeCallback();
