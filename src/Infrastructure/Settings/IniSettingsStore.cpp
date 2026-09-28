@@ -17,12 +17,19 @@
 // (Data/F4SE/Plugins under the game root — resolved via the module path so
 // non-standard Data locations still work). One-shot parse at kGameDataReady;
 // no file I/O anywhere else. Hand-rolled: three keys, no dependency.
+//
+// M9: panel geometry lives in a SIBLING file (FO4DialogueHistory.geometry.ini)
+// that release packages never ship, so redeploying the mod folder can no
+// longer clobber a saved layout (the M5 in-place INI rewrite was wiped every
+// whole-folder redeploy). Legacy Panel keys in the main INI are still honored
+// as a fallback; SaveGeometry never touches the main INI anymore.
 
 namespace
 {
 	constexpr std::wstring_view kIniFileName{ L"FO4DialogueHistory.ini" };
+	constexpr std::wstring_view kGeometryFileName{ L"FO4DialogueHistory.geometry.ini" };
 
-	[[nodiscard]] std::wstring ResolveIniPath()
+	[[nodiscard]] std::wstring ResolveSiblingPath(std::wstring_view a_fileName)
 	{
 		wchar_t buffer[1024]{};
 		const auto length = REX::W32::GetModuleFileNameW(REX::W32::GetCurrentModule(), buffer, std::size(buffer));
@@ -33,8 +40,19 @@ namespace
 		} else {
 			path.resize(sep + 1);
 		}
-		path.append(kIniFileName.data(), kIniFileName.size());
+		path.append(a_fileName.data(), a_fileName.size());
 		return path;
+	}
+
+	[[nodiscard]] std::vector<std::string> ReadLines(const std::wstring& a_path)
+	{
+		std::vector<std::string> lines;
+		std::ifstream            in(a_path);
+		std::string              line;
+		while (std::getline(in, line)) {
+			lines.push_back(line);
+		}
+		return lines;
 	}
 
 	[[nodiscard]] std::string_view Trim(std::string_view a_value)
@@ -68,6 +86,74 @@ namespace
 		const auto        result = std::from_chars(first, last, a_out, 10);
 		return result.ec == std::errc{} && result.ptr == last;
 	}
+
+	// Section-locked [Settings] scan for the panel quad. All four keys must be
+	// present and sane (M5 rules), else nullopt: coordinates unsigned with a
+	// generous upper bound; the view clamps the panel inside the viewport.
+	[[nodiscard]] std::optional<F4DH::Core::PanelGeometry> ExtractPanelGeometry(const std::vector<std::string>& a_lines)
+	{
+		constexpr std::uint32_t kMaxPanelExtent{ 16384 };
+		std::optional<std::uint32_t> panelX;
+		std::optional<std::uint32_t> panelY;
+		std::optional<std::uint32_t> panelWidth;
+		std::optional<std::uint32_t> panelHeight;
+		bool                         inSettingsSection{ false };
+
+		for (const auto& line : a_lines) {
+			std::string_view view{ line };
+
+			const auto comment = view.find_first_of(";#");
+			if (comment != std::string_view::npos) {
+				view = view.substr(0, comment);
+			}
+			view = Trim(view);
+			if (view.empty()) {
+				continue;
+			}
+
+			if (view.front() == '[' && view.back() == ']') {
+				inSettingsSection = ToLower(Trim(view.substr(1, view.size() - 2))) == "settings";
+				continue;
+			}
+			if (!inSettingsSection) {
+				continue;
+			}
+
+			const auto eq = view.find('=');
+			if (eq == std::string_view::npos) {
+				continue;
+			}
+			const auto key   = ToLower(Trim(view.substr(0, eq)));
+			const auto value = Trim(view.substr(eq + 1));
+
+			std::uint32_t parsed = 0;
+			if (!ParseUint(value, parsed)) {
+				continue;
+			}
+			if (key == "panelx") {
+				panelX = parsed;
+			} else if (key == "panely") {
+				panelY = parsed;
+			} else if (key == "panelwidth") {
+				panelWidth = parsed;
+			} else if (key == "panelheight") {
+				panelHeight = parsed;
+			}
+		}
+
+		if (panelX && panelY && panelWidth && panelHeight &&
+			*panelWidth >= F4DH::Core::kPanelMinWidth && *panelWidth <= kMaxPanelExtent &&
+			*panelHeight >= F4DH::Core::kPanelMinHeight && *panelHeight <= kMaxPanelExtent &&
+			*panelX <= kMaxPanelExtent && *panelY <= kMaxPanelExtent) {
+			return F4DH::Core::PanelGeometry{
+				static_cast<int>(*panelX),
+				static_cast<int>(*panelY),
+				static_cast<int>(*panelWidth),
+				static_cast<int>(*panelHeight)
+			};
+		}
+		return std::nullopt;
+	}
 }
 
 namespace F4DH::Infrastructure
@@ -76,26 +162,15 @@ namespace F4DH::Infrastructure
 	{
 		Application::Settings settings;
 
-		const auto path = ResolveIniPath();
-		std::ifstream in(path);
-		if (!in) {
+		const auto path = ResolveSiblingPath(kIniFileName);
+		const auto lines = ReadLines(path);
+		if (lines.empty()) {
 			REX::LogWarning(L"FO4DialogueHistory.ini not found ({}); using defaults", path);
-			return settings;
 		}
 
-		bool        inSettingsSection{ false };
-		std::string line;
+		bool inSettingsSection{ false };
 
-		// M5 panel geometry — all four keys must be present and sane, else the
-		// default centered layout stays. Coordinates are unsigned (the view
-		// clamps the panel inside the viewport) with a generous upper bound.
-		constexpr std::uint32_t kMaxPanelExtent{ 16384 };
-		std::optional<std::uint32_t> panelX;
-		std::optional<std::uint32_t> panelY;
-		std::optional<std::uint32_t> panelWidth;
-		std::optional<std::uint32_t> panelHeight;
-
-		while (std::getline(in, line)) {
+		for (const auto& line : lines) {
 			std::string_view view{ line };
 
 			const auto comment = view.find_first_of(";#");
@@ -152,38 +227,25 @@ namespace F4DH::Infrastructure
 				} else {
 					settings.fontSize = static_cast<int>(parsed);
 				}
-			} else if (key == "panelx") {
-				if (ok) {
-					panelX = parsed;
-				}
-			} else if (key == "panely") {
-				if (ok) {
-					panelY = parsed;
-				}
-			} else if (key == "panelwidth") {
-				if (ok) {
-					panelWidth = parsed;
-				}
-			} else if (key == "panelheight") {
-				if (ok) {
-					panelHeight = parsed;
-				}
 			}
-			// Unknown keys are ignored.
+			// Panel keys are handled by ExtractPanelGeometry; unknown keys ignored.
 		}
 
-		if (panelX && panelY && panelWidth && panelHeight &&
-			*panelWidth >= Core::kPanelMinWidth && *panelWidth <= kMaxPanelExtent &&
-			*panelHeight >= Core::kPanelMinHeight && *panelHeight <= kMaxPanelExtent &&
-			*panelX <= kMaxPanelExtent && *panelY <= kMaxPanelExtent) {
-			settings.panelGeometry = Core::PanelGeometry{
-				static_cast<int>(*panelX),
-				static_cast<int>(*panelY),
-				static_cast<int>(*panelWidth),
-				static_cast<int>(*panelHeight)
-			};
-		} else if (panelX || panelY || panelWidth || panelHeight) {
-			REX::LogWarning("IniSettingsStore: incomplete or invalid panel geometry — using default centered layout");
+		// Geometry precedence (M9): the sibling geometry file wins; legacy
+		// Panel keys in the main INI are the fallback; else default layout.
+		settings.panelGeometry = ExtractPanelGeometry(lines);
+		const auto geometryPath = ResolveSiblingPath(kGeometryFileName);
+		const auto geometryLines = ReadLines(geometryPath);
+		if (!geometryLines.empty()) {
+			if (const auto fromFile = ExtractPanelGeometry(geometryLines)) {
+				settings.panelGeometry = *fromFile;
+			} else {
+				REX::LogWarning("IniSettingsStore: geometry file present but invalid — ignoring it");
+			}
+		}
+		if (settings.panelGeometry) {
+			const auto& g = *settings.panelGeometry;
+			REX::LogInformation("IniSettingsStore: panel geometry loaded ({}x{} at {},{})", g.width, g.height, g.x, g.y);
 		}
 
 		return settings;
@@ -191,71 +253,20 @@ namespace F4DH::Infrastructure
 
 	void IniSettingsStore::SaveGeometry(const Core::PanelGeometry& a_geometry)
 	{
-		const auto path = ResolveIniPath();
-
-		// Rewrite the file, preserving every foreign line verbatim. The four
-		// panel keys are kept in one block directly under the [Settings]
-		// header; a missing file/section gets one created. Runs on the game
-		// thread at mouseup cadence (user gesture) — bounded and infrequent.
-		std::vector<std::string> lines;
-		{
-			std::ifstream in(path);
-			std::string   line;
-			while (std::getline(in, line)) {
-				lines.push_back(line);  // keeps any existing \r; re-emitted verbatim
-			}
-		}
-
-		const auto isPanelKey = [](std::string_view a_line) {
-			std::string_view view{ a_line };
-			if (!view.empty() && view.back() == '\r') {
-				view.remove_suffix(1);
-			}
-			const auto eq = view.find('=');
-			if (eq == std::string_view::npos) {
-				return false;
-			}
-			const auto key = ToLower(Trim(view.substr(0, eq)));
-			return key == "panelx" || key == "panely" || key == "panelwidth" || key == "panelheight";
-		};
-
-		const auto block = std::format("PanelX = {}\nPanelY = {}\nPanelWidth = {}\nPanelHeight = {}",
-			a_geometry.x, a_geometry.y, a_geometry.width, a_geometry.height);
-
-		std::vector<std::string> out;
-		bool                     inserted{ false };
-		for (const auto& raw : lines) {
-			if (isPanelKey(raw)) {
-				continue;  // stale value; the fresh block below is the only copy
-			}
-			out.push_back(raw);
-			std::string_view view{ raw };
-			if (!view.empty() && view.back() == '\r') {
-				view.remove_suffix(1);
-			}
-			view = Trim(view);
-			if (!inserted && view.size() >= 2 && view.front() == '[' && view.back() == ']' &&
-				ToLower(Trim(view.substr(1, view.size() - 2))) == "settings") {
-				out.push_back(block);
-				inserted = true;
-			}
-		}
-		if (!inserted) {
-			if (!out.empty() && !out.back().empty()) {
-				out.emplace_back();  // blank separator before the new section
-			}
-			out.emplace_back("[Settings]");
-			out.push_back(block);
-		}
+		// M9: write ONLY the sibling geometry file — never the user's main
+		// INI. The file is not part of the release package, so whole-folder
+		// redeploys cannot clobber it. Runs on the game thread at mouseup
+		// cadence (user gesture) — bounded and infrequent.
+		const auto path = ResolveSiblingPath(kGeometryFileName);
 
 		std::ofstream file(path, std::ios::binary | std::ios::trunc);
 		if (!file) {
 			REX::LogError(L"IniSettingsStore: failed to open {} for writing — geometry not persisted", path);
 			return;
 		}
-		for (const auto& outLine : out) {
-			file << outLine << '\n';
-		}
+		file << "[Settings]\n"
+			<< std::format("PanelX = {}\nPanelY = {}\nPanelWidth = {}\nPanelHeight = {}\n",
+				a_geometry.x, a_geometry.y, a_geometry.width, a_geometry.height);
 		REX::LogInformation("IniSettingsStore: panel geometry saved ({}x{} at {},{})",
 			a_geometry.width, a_geometry.height, a_geometry.x, a_geometry.y);
 	}
