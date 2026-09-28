@@ -8,6 +8,7 @@
 #include "RE/B/BGSRefAlias.hpp"
 #include "RE/B/BGSScene.hpp"
 #include "RE/B/BSSpinLock.hpp"
+#include "RE/T/TESForm.hpp"
 #include "RE/T/TESNPC.hpp"
 #include "RE/T/TESObjectREFR.hpp"
 #include "RE/T/TESQuest.hpp"
@@ -126,6 +127,7 @@ namespace
 		// instance data for conditional fills (what radiant quests use).
 		const RE::BGSLocation* loc = forcedLoc;
 		std::uint32_t        nameFormID = 0;
+		std::uint32_t        namingFormType = 0;
 		if (!loc) {
 			// Instance text maps aliasID -> the form providing the display
 			// name. All member reads — no engine calls.
@@ -143,12 +145,30 @@ namespace
 					break;
 				}
 			}
+			// The instance data names the form directly — resolve it through
+			// the engine's numeric form map (inline code; the two globals it
+			// reads are OG-verified: 422985 / 691815). A location naming form
+			// resolves immediately; an NPC naming form covers ref aliases
+			// whose ref is currently unloaded.
+			if (!loc && nameFormID != 0) {
+				if (const auto form = RE::TESForm::FindFormByNumericID(nameFormID)) {
+					namingFormType = static_cast<std::uint32_t>(form->GetFormType());
+					if (form->Is(RE::FormType::kLocation)) {
+						loc = static_cast<RE::BGSLocation*>(form);
+					} else if (form->Is(RE::FormType::kActorBase)) {
+						if (const char* name = static_cast<RE::TESNPC*>(form)->GetFullName(); name && name[0] != '\0') {
+							LogAliasOnce(a_quest->formID, a_tokenName, std::format("aliasID={} type={} nameFormID={:08X} -> npc '{}'", aliasID, aliasType, nameFormID, name));
+							return std::string(name);
+						}
+					}
+				}
+			}
 			// aliasedLocMap holds the runtime-filled locations. Its key
 			// semantics are undocumented, so every hit must be validated:
 			// probe either candidate key and require the hit's own formID to
 			// match the naming form; as a last resort accept the map's
 			// single entry when there is exactly one.
-			if (nameFormID != 0) {
+			if (!loc && nameFormID != 0) {
 				for (const std::uint32_t key : { nameFormID, aliasID }) {
 					const auto it = a_quest->aliasedLocMap.find(key);
 					if (it != a_quest->aliasedLocMap.end() && it->second &&
@@ -173,8 +193,8 @@ namespace
 			}
 		}
 		LogAliasOnce(a_quest->formID, a_tokenName, std::format(
-			"aliasID={} type={} forced={} nameFormID={:08X} locMapSize={} instances={} -> MISS",
-			aliasID, aliasType, forcedLoc != nullptr, nameFormID,
+			"aliasID={} type={} forced={} nameFormID={:08X} namingFormType={} locMapSize={} instances={} -> MISS",
+			aliasID, aliasType, forcedLoc != nullptr, nameFormID, namingFormType,
 			a_quest->aliasedLocMap.size(), a_quest->instanceDataArray.size()));
 		return std::nullopt;
 	}
