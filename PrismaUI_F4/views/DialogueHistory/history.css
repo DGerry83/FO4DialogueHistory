@@ -12,6 +12,11 @@ html, body {
   width: 60vw;
   height: 70vh;
   margin: 15vh auto;
+  /* C16: hidden until the plugin's setGeometry lands (it arrives via
+   * InteropCall a frame or two after the first paint, which otherwise
+   * flashes the default layout); history.js reveals it on first geometry
+   * application, with a fallback timer for runs with no saved geometry. */
+  visibility: hidden;
   background: rgba(10, 18, 10, 0.85);
   border: 1px solid #2B5B2B;
   border-radius: 4px;
@@ -301,6 +306,38 @@ html, body {
   justify-content: center;
   gap: 10px;
   margin-top: 12px;
+}
+
+/* C16: scope emphasis in the clear-confirmation message — "ALL" is bold red
+ * caps; the quest name is bold gold for readability. */
+.clearall {
+  color: #FF5555;
+  font-weight: bold;
+  text-transform: uppercase;
+}
+.clearscope {
+  color: #FFD866;
+  font-weight: bold;
+}
+
+/* C16: in-page tooltip. Ultralight/PrismaUI never surfaces native `title`
+ * tooltips (no OS tooltip surface), so history.js mirrors title text into
+ * this floating div at the cursor. pointer-events: none keeps it out of the
+ * hover path so it can't retrigger itself. */
+#dhtip {
+  position: fixed;
+  z-index: 20;  /* above the confirm overlay */
+  background: rgba(10, 18, 10, 0.95);
+  border: 1px solid #2B5B2B;
+  border-radius: 4px;
+  padding: 3px 8px;
+  color: #D7FFD7;
+  font-size: 12px;
+  max-width: 320px;
+  pointer-events: none;
+}
+#dhtip[hidden] {
+  display: none;
 }
 
 .obtn {

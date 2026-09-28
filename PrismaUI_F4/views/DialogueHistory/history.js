@@ -24,7 +24,12 @@
  * Scroll contract: snap to bottom on open and on selection switch;
  * auto-scroll on append only when the user is already at the bottom.
  * M8: the pane separator (#split) drag-resizes the index pane (session-
- * only, no persistence); quest names in the index word-wrap. */
+ * only, no persistence); quest names in the index word-wrap.
+ * C16: the panel starts CSS-hidden and is revealed by the first geometry
+ * application (kills the first-open flash at the default layout while the
+ * plugin's setGeometry InteropCall is still in flight); hover tooltips are
+ * rendered in-page from title attributes (native title never renders under
+ * Ultralight); the clear-confirm message names its scope. */
 "use strict";
 
 function dhParse(value, fallback) {
@@ -285,6 +290,18 @@ function dhClampGeometry(geo) {
   return { x: x, y: y, width: width, height: height };
 }
 
+/* C16 — first-open flash fix: the plugin's setGeometry arrives via
+ * InteropCall a frame or two after the first paint, so the panel is
+ * CSS-hidden (visibility) until geometry is applied. dhRevealPanel is also
+ * the fallback for first-ever runs with no saved geometry (default centered
+ * layout), fired on a timer from DOMContentLoaded. */
+function dhRevealPanel() {
+  const panel = document.getElementById("panel");
+  if (panel) {
+    panel.style.visibility = "visible";
+  }
+}
+
 /* Switch from margin-centering to absolute positioning at the given rect. */
 function dhApplyGeometry(geo) {
   const panel = document.getElementById("panel");
@@ -295,6 +312,7 @@ function dhApplyGeometry(geo) {
   panel.style.top = geo.y + "px";
   panel.style.width = geo.width + "px";
   panel.style.height = geo.height + "px";
+  dhRevealPanel();
 }
 
 /* Plugin -> JS: apply persisted geometry on open. Absent/invalid payloads
@@ -518,10 +536,9 @@ function dhSend(eventName) {
  * (selection -> "All", search cleared) is the accepted post-clear UX. */
 let dhClearTarget = "all";  // "all" or the decimal questId string
 
+/* Display name for a quest-scope clear target (only called when
+ * dhClearTarget is a questId, never "all"). */
 function dhClearScopeText() {
-  if (dhClearTarget === "all") {
-    return "all recorded lines";
-  }
   for (const entry of dhBuildIndex()) {
     if (entry.key === dhClearTarget) {
       return entry.questId === 0 ? "Unattributed" : dhQuestLabel(entry);
@@ -539,7 +556,22 @@ function dhShowClearOverlay() {
   dhClearTarget = dhSelection;
   const msg = document.getElementById("overlaymsg");
   if (msg) {
-    msg.textContent = "Clear " + dhClearScopeText() + "? This cannot be undone.";
+    // C16: the message names its scope. Built from text nodes (never
+    // innerHTML) so a quest name can't inject markup.
+    msg.textContent = "";
+    if (dhClearTarget === "all") {
+      const all = document.createElement("span");
+      all.className = "clearall";
+      all.textContent = "ALL";
+      msg.append(document.createTextNode("This will clear "), all,
+        document.createTextNode(" dialogue history. Are you sure?"));
+    } else {
+      const name = document.createElement("span");
+      name.className = "clearscope";
+      name.textContent = dhClearScopeText();
+      msg.append(document.createTextNode("This will clear all dialogue history for "), name,
+        document.createTextNode(". Are you sure?"));
+    }
   }
   const overlay = document.getElementById("overlay");
   if (overlay) {
@@ -569,8 +601,71 @@ function dhConfirmClear() {
   }
 }
 
+/* C16 — in-page tooltips. Ultralight/PrismaUI has no OS tooltip surface, so
+ * native `title` never renders; on first hover the text is moved to
+ * data-tip (attribute stripped, so a future native implementation can't
+ * double-show) and mirrored into #dhtip at the cursor. Delegated at the
+ * document level, so re-rendered quest rows need no wiring. parentNode walk
+ * instead of closest(): guaranteed to exist under Ultralight's JSC. */
+let dhTipEl = null;
+
+function dhTipFor(node) {
+  while (node && node !== document) {
+    if (node.getAttribute) {
+      const tip = node.getAttribute("title") || node.getAttribute("data-tip");
+      if (tip) {
+        return { el: node, tip: tip };
+      }
+    }
+    node = node.parentNode;
+  }
+  return null;
+}
+
+function dhTipPlace(x, y) {
+  if (!dhTipEl) {
+    return;
+  }
+  const view = dhViewportSize();
+  dhTipEl.style.left = Math.min(x + 14, Math.max(0, view.width - dhTipEl.offsetWidth - 4)) + "px";
+  dhTipEl.style.top = Math.min(y + 18, Math.max(0, view.height - dhTipEl.offsetHeight - 4)) + "px";
+}
+
+function dhTipHide() {
+  if (dhTipEl) {
+    dhTipEl.hidden = true;
+  }
+}
+
+function dhTipHover(event) {
+  if (!dhTipEl) {
+    return;
+  }
+  const found = dhTipFor(event.target);
+  if (!found) {
+    dhTipHide();
+    return;
+  }
+  if (found.el.hasAttribute("title")) {
+    found.el.setAttribute("data-tip", found.tip);
+    found.el.removeAttribute("title");
+  }
+  dhTipEl.textContent = found.tip;
+  dhTipEl.hidden = false;
+  dhTipPlace(event.clientX, event.clientY);
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   dhSend("requestHistory");
+  setTimeout(dhRevealPanel, 250);  // C16 fallback: no saved geometry
+  dhTipEl = document.getElementById("dhtip");
+  document.addEventListener("mouseover", dhTipHover);
+  document.addEventListener("mousemove", function (event) {
+    if (dhTipEl && !dhTipEl.hidden) {
+      dhTipPlace(event.clientX, event.clientY);
+    }
+  });
+  document.addEventListener("mouseleave", dhTipHide);
   const search = document.getElementById("search");
   if (search) {
     search.addEventListener("input", dhRenderIndex);
