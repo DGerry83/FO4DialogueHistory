@@ -7,6 +7,7 @@
 #include "Application/Capture/CapturePipeline.h"
 #include "Application/Input/HotkeyController.h"
 #include "Application/Settings/Settings.h"
+#include "Application/StressTest/StressTestInjector.h"
 #include "Application/View/ViewController.h"
 #include "Core/Dialogue/DialogueBuffer.h"
 #include "Infrastructure/Cosave/CosaveStore.h"
@@ -99,11 +100,14 @@ namespace F4DH
 		class InputSink final : public RE::BSInputEventUser
 		{
 		public:
-			InputSink(Application::HotkeyController& hotkey, Core::ILogger& log, std::uint32_t a_matchCode, std::uint32_t a_configuredScanCode) :
+			InputSink(Application::HotkeyController& hotkey, Core::ILogger& log, std::uint32_t a_matchCode, std::uint32_t a_configuredScanCode,
+				std::uint32_t a_stressMatchCode = 0, std::uint32_t a_stressScanCode = 0) :
 				_hotkey(hotkey),
 				_log(log),
 				_matchCode(a_matchCode),
-				_configuredScanCode(a_configuredScanCode)
+				_configuredScanCode(a_configuredScanCode),
+				_stressMatchCode(a_stressMatchCode),
+				_stressScanCode(a_stressScanCode)
 			{}
 
 			// The dispatcher consults this before delivering; the base
@@ -136,10 +140,14 @@ namespace F4DH
 				// C11: on OG the engine code is a VK (translated at init into
 				// _matchCode); on NG/AE it is the raw DIK scan code. Only the
 				// configured DIK code is ever handed down, so the Application
-				// layer never sees VK values.
+				// layer never sees VK values. The stress-test pair follows the
+				// same rule; a 0 stress match code disables the branch entirely.
 				if (code == _matchCode) {
 					_log.Info(std::format("input: hotkey matched (code {}), toggling panel", code));
 					_hotkey.OnKeyDown(_configuredScanCode);
+				} else if (_stressMatchCode != 0 && code == _stressMatchCode) {
+					_log.Info(std::format("input: stress-test key matched (code {}), injecting batch", code));
+					_hotkey.OnKeyDown(_stressScanCode);
 				}
 			}
 
@@ -148,6 +156,8 @@ namespace F4DH
 			Core::ILogger&                 _log;
 			std::uint32_t                  _matchCode;           // DIK on NG/AE, VK on OG
 			std::uint32_t                  _configuredScanCode;  // always DIK (INI value)
+			std::uint32_t                  _stressMatchCode;     // DIK on NG/AE, VK on OG; 0 = disabled
+			std::uint32_t                  _stressScanCode;      // always DIK (INI value)
 			bool                           _loggedFirstEvent{ false };
 		};
 	}
@@ -180,9 +190,21 @@ namespace F4DH
 		static Infrastructure::PrismaViewBridge    bridge;
 		static Application::ViewController         viewController(buffer, bridge, root.log);
 		static Application::CapturePipeline        pipeline(buffer, viewController, root.log, root.settings.verboseCapture);
-		static Application::HotkeyController       hotkey(root.settings, viewController);
+		static Application::StressTestInjector     stressInjector(buffer, viewController, root.log, root.settings);
+		static Application::HotkeyController       hotkey(root.settings, viewController, stressInjector);
+
+		// The stress key gets its own match pair, resolved through the same
+		// DIK->VK translation as the panel hotkey and only when configured:
+		// the default 0 (or a duplicate of the panel hotkey) leaves the
+		// InputSink branch disabled — the panel toggle always wins the conflict.
+		std::uint32_t stressScanCode = root.settings.stressTestKey;
+		if (stressScanCode != 0 && stressScanCode == root.settings.hotkeyScanCode) {
+			root.log.Warn(std::format("settings: StressTestKey {} duplicates the panel hotkey — stress-test key disabled (panel toggle wins)", stressScanCode));
+			stressScanCode = 0;
+		}
 		const auto                                 matchCode = ResolveHotkeyMatchCode(root.settings.hotkeyScanCode, root.log);
-		static InputSink                           inputSink(hotkey, root.log, matchCode, root.settings.hotkeyScanCode);
+		const auto                                 stressMatchCode = stressScanCode != 0 ? ResolveHotkeyMatchCode(stressScanCode, root.log) : 0;
+		static InputSink                           inputSink(hotkey, root.log, matchCode, root.settings.hotkeyScanCode, stressMatchCode, stressScanCode);
 
 		bridge.SetFontSize(root.settings.fontSize);
 		bridge.SetGeometry(root.settings.panelGeometry);

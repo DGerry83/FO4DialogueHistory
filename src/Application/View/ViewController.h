@@ -28,6 +28,10 @@ namespace F4DH::Application
 		void OnClearAll();
 		void OnClearQuest(std::uint32_t questId);
 
+		// Mirrors the OnClearAll refresh: a bulk buffer mutation outside the
+		// capture path (stress-test injector) needs a full snapshot re-push.
+		void NotifyBulkChange();
+
 		// Composition sets the instance the global thunks (close + clear)
 		// route to (plain function pointers are instance-unaware).
 		static void SetCloseTarget(ViewController* instance) noexcept;

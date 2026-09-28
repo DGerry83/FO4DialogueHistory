@@ -22,8 +22,10 @@ add_executable(Core.Tests
 	CosaveCodecTests.cpp
 	PanelGeometryTests.cpp
 	AliasTokensTests.cpp
+	StressTestDataGeneratorTests.cpp
 	${CMAKE_SOURCE_DIR}/src/Core/Dialogue/PayloadBuilder.cpp
 	${CMAKE_SOURCE_DIR}/src/Core/Dialogue/CosaveCodec.cpp
+	${CMAKE_SOURCE_DIR}/src/Core/Dialogue/StressTestDataGenerator.cpp
 	${CMAKE_SOURCE_DIR}/src/Core/Geometry/PanelGeometry.cpp
 )
 

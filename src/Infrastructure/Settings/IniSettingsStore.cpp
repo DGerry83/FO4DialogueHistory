@@ -16,7 +16,7 @@
 // Reads FO4DialogueHistory.ini from the folder that hosts this DLL
 // (Data/F4SE/Plugins under the game root — resolved via the module path so
 // non-standard Data locations still work). One-shot parse at kGameDataReady;
-// no file I/O anywhere else. Hand-rolled: four keys, no dependency.
+// no file I/O anywhere else. Hand-rolled: seven keys, no dependency.
 //
 // M9: panel geometry lives in a SIBLING file (FO4DialogueHistory.geometry.ini)
 // that release packages never ship, so redeploying the mod folder can no
@@ -169,7 +169,8 @@ namespace F4DH::Infrastructure
 		}
 
 		// Section tracking: [Settings] holds the capture/display schema,
-		// [Diagnostics] the logging switches. Unknown sections are ignored.
+		// [Diagnostics] the logging switches and the stress-test keys. Unknown
+		// sections are ignored.
 		std::string currentSection;
 
 		for (const auto& line : lines) {
@@ -207,6 +208,33 @@ namespace F4DH::Infrastructure
 						REX::LogWarning("IniSettingsStore: VerboseCapture {} out of range 0-1 — clamped to 1", parsed);
 					} else {
 						settings.verboseCapture = parsed == 1;
+					}
+				} else if (key == "stresstestkey") {
+					std::uint32_t parsed = 0;
+					if (!ParseUint(value, parsed)) {
+						REX::LogWarning("IniSettingsStore: invalid StressTestKey '{}' — keeping default 0 (disabled)", value);
+					} else {
+						settings.stressTestKey = parsed;  // any uint is a valid DIK code; 0 = disabled
+					}
+				} else if (key == "stresstestlines") {
+					std::uint32_t parsed = 0;
+					if (!ParseUint(value, parsed)) {
+						REX::LogWarning("IniSettingsStore: invalid StressTestLines '{}' — keeping default 500", value);
+					} else if (parsed < 1 || parsed > 5000) {
+						settings.stressTestLines = std::clamp(parsed, 1u, 5000u);
+						REX::LogWarning("IniSettingsStore: StressTestLines {} out of range 1-5000 — clamped to {}", parsed, settings.stressTestLines);
+					} else {
+						settings.stressTestLines = parsed;
+					}
+				} else if (key == "stresstestquests") {
+					std::uint32_t parsed = 0;
+					if (!ParseUint(value, parsed)) {
+						REX::LogWarning("IniSettingsStore: invalid StressTestQuests '{}' — keeping default 20", value);
+					} else if (parsed < 1 || parsed > 100) {
+						settings.stressTestQuests = std::clamp(parsed, 1u, 100u);
+						REX::LogWarning("IniSettingsStore: StressTestQuests {} out of range 1-100 — clamped to {}", parsed, settings.stressTestQuests);
+					} else {
+						settings.stressTestQuests = parsed;
 					}
 				}
 				continue;  // unknown [Diagnostics] keys ignored

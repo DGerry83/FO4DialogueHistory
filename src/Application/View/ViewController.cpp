@@ -88,6 +88,13 @@ namespace F4DH::Application
 		_bridge.PushSnapshot(Core::PayloadBuilder::BuildSnapshot(_buffer.Snapshot()));
 	}
 
+	void ViewController::NotifyBulkChange()
+	{
+		if (_state == ViewState::Open) {
+			_bridge.PushSnapshot(Core::PayloadBuilder::BuildSnapshot(_buffer.Snapshot()));
+		}
+	}
+
 	void ViewController::Open()
 	{
 		if (_state == ViewState::Degraded) {
