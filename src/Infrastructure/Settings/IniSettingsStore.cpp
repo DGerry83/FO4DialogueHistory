@@ -134,7 +134,9 @@ namespace F4DH::Infrastructure
 				}
 			} else if (key == "buffersize") {
 				if (!ok) {
-					REX::LogWarning("IniSettingsStore: invalid BufferSize '{}' — keeping default 50", value);
+					REX::LogWarning("IniSettingsStore: invalid BufferSize '{}' — keeping default 0 (unlimited)", value);
+				} else if (parsed == 0) {
+					settings.bufferSize = 0;  // unlimited — no eviction
 				} else if (parsed < 10 || parsed > 500) {
 					settings.bufferSize = std::clamp(parsed, 10u, 500u);
 					REX::LogWarning("IniSettingsStore: BufferSize {} out of range 10-500 — clamped to {}", parsed, settings.bufferSize);

@@ -8,7 +8,8 @@
 
 namespace F4DH::Core
 {
-	// Fixed-capacity FIFO ring of the most recent dialogue lines.
+	// FIFO buffer of the most recent dialogue lines. Capacity 0 = unlimited
+	// (no eviction); >0 retains only the newest `capacity` lines.
 	class DialogueBuffer
 	{
 	public:
@@ -18,10 +19,7 @@ namespace F4DH::Core
 
 		void Push(DialogueLine line)
 		{
-			if (_capacity == 0) {
-				return;
-			}
-			if (_lines.size() >= _capacity) {
+			if (_capacity > 0 && _lines.size() >= _capacity) {
 				_lines.pop_front();
 			}
 			_lines.push_back(std::move(line));

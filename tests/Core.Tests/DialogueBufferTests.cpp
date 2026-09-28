@@ -71,14 +71,19 @@ TEST_CASE("clear empties the buffer")
 	REQUIRE(buffer.Snapshot().empty());
 }
 
-TEST_CASE("zero-capacity buffer ignores pushes")
+TEST_CASE("zero capacity is unlimited - no eviction")
 {
 	F4DH::Core::DialogueBuffer buffer(0);
-	buffer.Push(MakeLine("a", "1"));
+	for (int i = 0; i < 600; ++i) {
+		buffer.Push(MakeLine("a", std::to_string(i)));
+	}
 
 	REQUIRE(buffer.Capacity() == 0);
-	REQUIRE(buffer.Size() == 0);
-	REQUIRE(buffer.Snapshot().empty());
+	REQUIRE(buffer.Size() == 600);
+	const auto snapshot = buffer.Snapshot();
+	REQUIRE(snapshot.size() == 600);
+	REQUIRE(snapshot.front().text == "0");  // oldest first, nothing evicted
+	REQUIRE(snapshot.back().text == "599");
 }
 
 TEST_CASE("snapshot round-trips quest attribution fields")

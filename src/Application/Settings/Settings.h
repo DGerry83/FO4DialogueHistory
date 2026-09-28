@@ -15,7 +15,7 @@ namespace F4DH::Application
 	struct Settings
 	{
 		std::uint32_t hotkeyScanCode = 35;  // provisional: DIK_H — verified against vanilla binds in milestone 4 (AC9)
-		std::size_t   bufferSize = 50;      // range 10–500
+		std::size_t   bufferSize = 0;       // 0 = unlimited (no eviction); >0 caps, range 10–500
 		int           fontSize = 16;        // range 10–32 (px)
 		std::optional<Core::PanelGeometry> panelGeometry;  // absent = default centered layout
 	};

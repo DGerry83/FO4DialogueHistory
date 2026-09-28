@@ -295,17 +295,24 @@ function setHistory(lines) {
   dhRenderLog();
 }
 
-/* Deterministic per-NPC speaker color: stable hue from the name hash, so a
- * given NPC keeps one color within and across conversations. Player lines
- * keep the CSS gold (.line.player); other kinds keep the Pip-Boy green. */
+/* Per-NPC speaker colors: golden-angle assignment. Each distinct NPC name
+ * gets the next hue ~137.5° from the previous one — maximally separated,
+ * so two NPCs in the same conversation can't collide the way raw name
+ * hashes could. The name→hue map is stable for the session and rebuilt in
+ * line order on snapshot replay, so a name keeps its color while the
+ * history lives. Player lines keep the CSS gold; other kinds keep green. */
+const dhSpeakerHues = new Map();
+let dhNextHue = 90;  // start clear of the player gold (~45)
+
 function dhNameColor(name) {
-  let h = 0;
-  for (let i = 0; i < name.length; i++) {
-    h = (h * 31 + name.charCodeAt(i)) >>> 0;
-  }
-  let hue = h % 360;
-  if (hue >= 15 && hue <= 75) {
-    hue = (hue + 120) % 360;  // keep clear of the player gold (~45)
+  let hue = dhSpeakerHues.get(name);
+  if (hue === undefined) {
+    hue = dhNextHue % 360;
+    dhNextHue += 137.508;  // golden angle — consecutive picks stay far apart
+    if (hue >= 15 && hue <= 75) {
+      hue = (hue + 120) % 360;  // keep clear of the player gold (~45)
+    }
+    dhSpeakerHues.set(name, hue);
   }
   return "hsl(" + hue + ", 70%, 65%)";
 }
