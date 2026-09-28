@@ -21,6 +21,7 @@ add_executable(Core.Tests
 	PayloadBuilderTests.cpp
 	CosaveCodecTests.cpp
 	PanelGeometryTests.cpp
+	AliasTokensTests.cpp
 	${CMAKE_SOURCE_DIR}/src/Core/Dialogue/PayloadBuilder.cpp
 	${CMAKE_SOURCE_DIR}/src/Core/Dialogue/CosaveCodec.cpp
 	${CMAKE_SOURCE_DIR}/src/Core/Geometry/PanelGeometry.cpp
