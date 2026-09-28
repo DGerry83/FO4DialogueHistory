@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <deque>
+#include <mutex>
 #include <vector>
 
 #include "DialogueLine.h"
@@ -10,6 +11,8 @@ namespace F4DH::Core
 {
 	// FIFO buffer of the most recent dialogue lines. Capacity 0 = unlimited
 	// (no eviction); >0 retains only the newest `capacity` lines.
+	// Thread-safe: the subtitle hook pushes on the game thread while the
+	// hotkey path snapshots on a UIJob worker thread (2026-09-27 crash fix).
 	class DialogueBuffer
 	{
 	public:
@@ -19,25 +22,36 @@ namespace F4DH::Core
 
 		void Push(DialogueLine line)
 		{
+			const std::lock_guard lock(_mutex);
 			if (_capacity > 0 && _lines.size() >= _capacity) {
 				_lines.pop_front();
 			}
 			_lines.push_back(std::move(line));
 		}
 
-		void Clear() { _lines.clear(); }
+		void Clear()
+		{
+			const std::lock_guard lock(_mutex);
+			_lines.clear();
+		}
 
-		[[nodiscard]] std::size_t Size() const { return _lines.size(); }
+		[[nodiscard]] std::size_t Size() const
+		{
+			const std::lock_guard lock(_mutex);
+			return _lines.size();
+		}
 		[[nodiscard]] std::size_t Capacity() const { return _capacity; }
 
 		// Oldest-first snapshot.
 		[[nodiscard]] std::vector<DialogueLine> Snapshot() const
 		{
+			const std::lock_guard lock(_mutex);
 			return { _lines.begin(), _lines.end() };
 		}
 
 	private:
-		std::size_t             _capacity;
+		std::size_t              _capacity;
 		std::deque<DialogueLine> _lines;
+		mutable std::mutex       _mutex;
 	};
 }
