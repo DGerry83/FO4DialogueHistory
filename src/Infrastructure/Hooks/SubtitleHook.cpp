@@ -3,6 +3,8 @@
 #include "Application/Capture/ISubtitleSink.h"
 #include "Core/Dialogue/SubtitleEvent.h"
 
+#include "QuestResolver.h"
+
 #include "REL/REL.hpp"
 
 #include "RE/A/Actor.hpp"
@@ -161,6 +163,10 @@ namespace
 		event.menuOpen = topicManager ? topicManager->menuOpen : false;
 		event.sceneIsPlayerDialogue = IsPlayerDialogueScene(a_topicInfo);
 		event.spokenToPlayer = a_spokenToPlayer;
+
+		const auto quest = F4DH::Infrastructure::QuestResolver::Resolve(a_topicInfo);
+		event.questId = quest.questId;
+		event.questName = quest.questName;
 
 		g_sink->OnSubtitle(event);
 	}

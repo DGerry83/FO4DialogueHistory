@@ -80,3 +80,25 @@ TEST_CASE("zero-capacity buffer ignores pushes")
 	REQUIRE(buffer.Size() == 0);
 	REQUIRE(buffer.Snapshot().empty());
 }
+
+TEST_CASE("snapshot round-trips quest attribution fields")
+{
+	F4DH::Core::DialogueBuffer buffer(3);
+
+	F4DH::Core::DialogueLine attributed;
+	attributed.speaker = "Piper";
+	attributed.kind = F4DH::Core::SpeakerKind::Npc;
+	attributed.text = "You okay?";
+	attributed.questId = 1234567;
+	attributed.questName = "The Molecular Level";
+	buffer.Push(std::move(attributed));
+
+	buffer.Push(MakeLine("b", "2"));
+
+	const auto lines = buffer.Snapshot();
+	REQUIRE(lines.size() == 2);
+	REQUIRE(lines[0].questId == 1234567);
+	REQUIRE(lines[0].questName == "The Molecular Level");
+	REQUIRE(lines[1].questId == 0);
+	REQUIRE(lines[1].questName.empty());
+}

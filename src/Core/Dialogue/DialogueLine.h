@@ -16,8 +16,10 @@ namespace F4DH::Core
 	// within DialogueBuffer.
 	struct DialogueLine
 	{
-		std::string  speaker;
-		SpeakerKind  kind = SpeakerKind::Unknown;
-		std::string  text;
+		std::string   speaker;
+		SpeakerKind   kind = SpeakerKind::Unknown;
+		std::string   text;
+		std::uint32_t questId = 0;  // owning quest formID, 0 = unattributed
+		std::string   questName;    // owning quest name, empty = unattributed
 	};
 }

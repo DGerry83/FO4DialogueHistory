@@ -57,6 +57,8 @@ namespace F4DH::Core
 		}
 		return "{\"speaker\":\"" + Escape(line.speaker) +
 			"\",\"kind\":\"" + kind +
-			"\",\"text\":\"" + Escape(line.text) + "\"}";
+			"\",\"text\":\"" + Escape(line.text) +
+			"\",\"questId\":" + std::to_string(line.questId) +
+			",\"questName\":\"" + Escape(line.questName) + "\"}";
 	}
 }

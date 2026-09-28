@@ -1,6 +1,8 @@
 /* FO4 Dialogue History — PrismaUI view.
  * Plugin -> JS: setHistory(array)   full snapshot, oldest first
- *               appendLine(object)  one {speaker, kind, text}
+ *               appendLine(object)  one {speaker, kind, text, questId, questName}
+ *                                     (schema v2; older DLLs omit the quest
+ *                                      fields — defaults are applied below)
  * JS -> plugin: window.requestHistory() on DOM ready
  *               window.closeRequested() on Esc
  * (RegisterJSListener binds each name as a global window function;
@@ -60,11 +62,17 @@ function appendLine(line) {
   if (!line || typeof line !== "object") {
     return;
   }
+  // Tolerant defaults: schema v2 lines carry questId/questName, but payloads
+  // from an older DLL omit them — never let that break rendering.
+  line.questId = typeof line.questId === "number" ? line.questId : 0;
+  line.questName = typeof line.questName === "string" ? line.questName : "";
   dhSetEmptyVisible(false);
   const log = document.getElementById("log");
   const atBottom = log.scrollTop + log.clientHeight >= log.scrollHeight - 4;
   const row = document.createElement("div");
   row.className = "line " + line.kind;
+  row.dataset.questId = String(line.questId);
+  row.dataset.questName = line.questName;
   const speaker = document.createElement("span");
   speaker.className = "speaker";
   speaker.textContent = line.speaker + ":";

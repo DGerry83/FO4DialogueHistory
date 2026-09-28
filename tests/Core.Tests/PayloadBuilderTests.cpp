@@ -30,15 +30,15 @@ TEST_CASE("snapshot is a JSON array oldest-first with speaker, kind, and text fi
 	};
 
 	REQUIRE(F4DH::Core::PayloadBuilder::BuildSnapshot(lines) ==
-		"[{\"speaker\":\"Piper\",\"kind\":\"npc\",\"text\":\"You okay?\"},"
-		"{\"speaker\":\"Player\",\"kind\":\"player\",\"text\":\"Fine.\"}]");
+		"[{\"speaker\":\"Piper\",\"kind\":\"npc\",\"text\":\"You okay?\",\"questId\":0,\"questName\":\"\"},"
+		"{\"speaker\":\"Player\",\"kind\":\"player\",\"text\":\"Fine.\",\"questId\":0,\"questName\":\"\"}]");
 }
 
 TEST_CASE("append produces a single JSON object")
 {
 	const auto line = MakeLine("Player", F4DH::Core::SpeakerKind::Player, "Let's move.");
 	REQUIRE(F4DH::Core::PayloadBuilder::BuildAppend(line) ==
-		"{\"speaker\":\"Player\",\"kind\":\"player\",\"text\":\"Let's move.\"}");
+		"{\"speaker\":\"Player\",\"kind\":\"player\",\"text\":\"Let's move.\",\"questId\":0,\"questName\":\"\"}");
 }
 
 TEST_CASE("kind maps to player, npc, or unknown")
@@ -50,35 +50,74 @@ TEST_CASE("kind maps to player, npc, or unknown")
 	};
 
 	REQUIRE(F4DH::Core::PayloadBuilder::BuildSnapshot(lines) ==
-		"[{\"speaker\":\"a\",\"kind\":\"player\",\"text\":\"\"},"
-		"{\"speaker\":\"b\",\"kind\":\"npc\",\"text\":\"\"},"
-		"{\"speaker\":\"c\",\"kind\":\"unknown\",\"text\":\"\"}]");
+		"[{\"speaker\":\"a\",\"kind\":\"player\",\"text\":\"\",\"questId\":0,\"questName\":\"\"},"
+		"{\"speaker\":\"b\",\"kind\":\"npc\",\"text\":\"\",\"questId\":0,\"questName\":\"\"},"
+		"{\"speaker\":\"c\",\"kind\":\"unknown\",\"text\":\"\",\"questId\":0,\"questName\":\"\"}]");
 }
 
 TEST_CASE("quotes and backslashes are escaped")
 {
 	const auto line = MakeLine("s", F4DH::Core::SpeakerKind::Npc, "say \"hi\" \\o/");
 	REQUIRE(F4DH::Core::PayloadBuilder::BuildAppend(line) ==
-		"{\"speaker\":\"s\",\"kind\":\"npc\",\"text\":\"say \\\"hi\\\" \\\\o/\"}");
+		"{\"speaker\":\"s\",\"kind\":\"npc\",\"text\":\"say \\\"hi\\\" \\\\o/\",\"questId\":0,\"questName\":\"\"}");
 }
 
 TEST_CASE("newline, carriage return, and tab are escaped")
 {
 	const auto line = MakeLine("s", F4DH::Core::SpeakerKind::Npc, "a\nb\rc\td");
 	REQUIRE(F4DH::Core::PayloadBuilder::BuildAppend(line) ==
-		"{\"speaker\":\"s\",\"kind\":\"npc\",\"text\":\"a\\nb\\rc\\td\"}");
+		"{\"speaker\":\"s\",\"kind\":\"npc\",\"text\":\"a\\nb\\rc\\td\",\"questId\":0,\"questName\":\"\"}");
 }
 
 TEST_CASE("other control characters are escaped as lowercase unicode")
 {
 	const auto line = MakeLine("s", F4DH::Core::SpeakerKind::Npc, std::string("x\x01\x1fy"));
 	REQUIRE(F4DH::Core::PayloadBuilder::BuildAppend(line) ==
-		"{\"speaker\":\"s\",\"kind\":\"npc\",\"text\":\"x\\u0001\\u001fy\"}");
+		"{\"speaker\":\"s\",\"kind\":\"npc\",\"text\":\"x\\u0001\\u001fy\",\"questId\":0,\"questName\":\"\"}");
 }
 
 TEST_CASE("speaker field is escaped")
 {
 	const auto line = MakeLine("Nick \"Valentine\"", F4DH::Core::SpeakerKind::Npc, "text");
 	REQUIRE(F4DH::Core::PayloadBuilder::BuildAppend(line) ==
-		"{\"speaker\":\"Nick \\\"Valentine\\\"\",\"kind\":\"npc\",\"text\":\"text\"}");
+		"{\"speaker\":\"Nick \\\"Valentine\\\"\",\"kind\":\"npc\",\"text\":\"text\",\"questId\":0,\"questName\":\"\"}");
+}
+
+TEST_CASE("payload v2 carries questId and questName in snapshot and append")
+{
+	F4DH::Core::DialogueLine line;
+	line.speaker = "Piper";
+	line.kind = F4DH::Core::SpeakerKind::Npc;
+	line.text = "You okay?";
+	line.questId = 1234567;
+	line.questName = "The Molecular Level";
+
+	REQUIRE(F4DH::Core::PayloadBuilder::BuildAppend(line) ==
+		"{\"speaker\":\"Piper\",\"kind\":\"npc\",\"text\":\"You okay?\","
+		"\"questId\":1234567,\"questName\":\"The Molecular Level\"}");
+
+	REQUIRE(F4DH::Core::PayloadBuilder::BuildSnapshot({ line }) ==
+		"[{\"speaker\":\"Piper\",\"kind\":\"npc\",\"text\":\"You okay?\","
+		"\"questId\":1234567,\"questName\":\"The Molecular Level\"}]");
+}
+
+TEST_CASE("unattributed line serializes as questId 0 and empty questName")
+{
+	const auto line = MakeLine("Player", F4DH::Core::SpeakerKind::Player, "Fine.");
+	REQUIRE(F4DH::Core::PayloadBuilder::BuildAppend(line) ==
+		"{\"speaker\":\"Player\",\"kind\":\"player\",\"text\":\"Fine.\","
+		"\"questId\":0,\"questName\":\"\"}");
+}
+
+TEST_CASE("quest name is escaped in the payload")
+{
+	F4DH::Core::DialogueLine line;
+	line.speaker = "s";
+	line.kind = F4DH::Core::SpeakerKind::Npc;
+	line.text = "t";
+	line.questId = 7;
+	line.questName = "say \"hi\"";
+	REQUIRE(F4DH::Core::PayloadBuilder::BuildAppend(line) ==
+		"{\"speaker\":\"s\",\"kind\":\"npc\",\"text\":\"t\","
+		"\"questId\":7,\"questName\":\"say \\\"hi\\\"\"}");
 }

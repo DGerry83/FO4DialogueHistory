@@ -33,6 +33,8 @@ namespace F4DH::Application
 		line.speaker = event.speakerIsPlayer ? "Player"
 			: (event.speakerName.empty() ? "Unknown" : event.speakerName);
 		line.text = event.text;
+		line.questId = event.questId;
+		line.questName = event.questName;
 
 		_logger.Debug(std::format("recorded: {}: {}", line.speaker, line.text));
 
