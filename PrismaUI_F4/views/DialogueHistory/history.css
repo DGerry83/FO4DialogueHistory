@@ -35,6 +35,96 @@ html, body {
   font-variant: normal;
 }
 
+/* Two-pane body (M4): left quest index, right dialogue. #body takes the
+ * panel's remaining height; min-height: 0 lets the children scroll instead
+ * of stretching the panel. */
+#body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+#index {
+  width: 32%;
+  min-width: 180px;
+  max-width: 320px;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid #2B5B2B;
+}
+
+#search {
+  margin: 8px;
+  padding: 5px 8px;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid #2B5B2B;
+  border-radius: 4px;
+  color: #D7FFD7;
+  font: inherit;
+  font-size: 14px;
+}
+#search:focus {
+  outline: none;
+  border-color: #7BFF7B;
+}
+
+#quests {
+  flex: 1;
+  overflow-y: auto;
+  padding-bottom: 6px;
+}
+
+/* Same Pip-Boy scrollbar as the log. */
+#quests::-webkit-scrollbar {
+  width: 8px;
+}
+#quests::-webkit-scrollbar-track {
+  background: transparent;
+}
+#quests::-webkit-scrollbar-thumb {
+  background: #2B5B2B;
+  border-radius: 4px;
+}
+
+.qentry {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 10px;
+  cursor: pointer;
+  color: #7BFF7B;
+  font-size: 14px;
+}
+.qentry:hover {
+  background: rgba(43, 91, 43, 0.25);
+}
+.qentry.active {
+  background: rgba(43, 91, 43, 0.45);
+  color: #D7FFD7;
+}
+
+.qname {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.qcount {
+  color: #4C8A4C;
+  font-size: 12px;
+}
+.qentry.active .qcount {
+  color: #7BFF7B;
+}
+
+#dialogue {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
 #empty {
   padding: 24px 10px;
   text-align: center;
