@@ -170,15 +170,16 @@ namespace F4DH
 		static Infrastructure::IniSettingsStore settingsStore;
 		root.settings = settingsStore.Load();
 		root.log.Info(std::format(
-			"settings: hotkey={} bufferSize={} fontSize={}",
+			"settings: hotkey={} bufferSize={} fontSize={} verboseCapture={}",
 			root.settings.hotkeyScanCode,
 			root.settings.bufferSize,
-			root.settings.fontSize));
+			root.settings.fontSize,
+			root.settings.verboseCapture));
 
 		static Core::DialogueBuffer                buffer{ root.settings.bufferSize };
 		static Infrastructure::PrismaViewBridge    bridge;
-		static Application::ViewController         viewController(buffer, bridge);
-		static Application::CapturePipeline        pipeline(buffer, viewController, root.log);
+		static Application::ViewController         viewController(buffer, bridge, root.log);
+		static Application::CapturePipeline        pipeline(buffer, viewController, root.log, root.settings.verboseCapture);
 		static Application::HotkeyController       hotkey(root.settings, viewController);
 		const auto                                 matchCode = ResolveHotkeyMatchCode(root.settings.hotkeyScanCode, root.log);
 		static InputSink                           inputSink(hotkey, root.log, matchCode, root.settings.hotkeyScanCode);

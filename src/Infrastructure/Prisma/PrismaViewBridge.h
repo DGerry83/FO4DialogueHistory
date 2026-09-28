@@ -28,6 +28,7 @@ namespace F4DH::Infrastructure
 		void PushSnapshot(const std::string& json) override;
 		void AppendLine(const std::string& json) override;
 		void SetCloseCallback(CloseCallback fn) override;
+		void SetClearCallbacks(ClearAllCallback allFn, ClearQuestCallback questFn) override;
 		[[nodiscard]] bool IsHealthy() override;
 
 		// Configured base font size, pushed to the view ahead of each
@@ -52,6 +53,8 @@ namespace F4DH::Infrastructure
 		PRISMA_UI_API::IVPrismaUI11*       _api = nullptr;  // resolved at construction; null = PrismaUI absent
 		PrismaView                         _view = 0;
 		CloseCallback                      _closeCallback = nullptr;
+		ClearAllCallback                   _clearAllCallback = nullptr;
+		ClearQuestCallback                 _clearQuestCallback = nullptr;
 		int                                _fontSize{ 16 };
 		std::optional<Core::PanelGeometry> _geometry;
 		Application::ISettingsStore*       _settingsStore = nullptr;

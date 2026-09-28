@@ -1,6 +1,9 @@
 #include "PrismaViewBridge.h"
 
+#include <charconv>
+#include <cstdint>
 #include <functional>
+#include <system_error>
 #include <utility>
 
 #include "Application/Settings/ISettingsStore.h"
@@ -29,6 +32,8 @@ namespace F4DH::Infrastructure
 		PrismaViewBridge*                g_bridge{ nullptr };
 		PRISMA_UI_API::IVPrismaUI11*     g_api{ nullptr };
 		PrismaViewBridge::CloseCallback  g_closeCallback{ nullptr };
+		PrismaViewBridge::ClearAllCallback   g_clearAllCallback{ nullptr };
+		PrismaViewBridge::ClearQuestCallback g_clearQuestCallback{ nullptr };
 		std::string                      g_snapshotCache;
 		bool                             g_prismaMissingLogged{ false };
 		bool                             g_createResultLogged{ false };
@@ -82,6 +87,37 @@ namespace F4DH::Infrastructure
 			});
 		}
 
+		void OnClearAllRequested(const char*)
+		{
+			// Fires on PrismaUI's thread; route on the game thread.
+			REX::LogInformation("PrismaViewBridge: clearAllRequested received from view");
+			Dispatch([] {
+				if (g_clearAllCallback) {
+					g_clearAllCallback();
+				}
+			});
+		}
+
+		void OnClearQuestRequested(const char* a_payload)
+		{
+			// Fires on PrismaUI's thread. Parsing is pure, so validate the
+			// decimal questId here and drop malformed payloads before paying
+			// for a game-thread hop; the mutation itself runs on the game
+			// thread like every other buffer operation.
+			const std::string payload = a_payload ? a_payload : "";
+			std::uint32_t     questId = 0;
+			const auto        parsed = std::from_chars(payload.data(), payload.data() + payload.size(), questId);
+			if (parsed.ec != std::errc() || parsed.ptr != payload.data() + payload.size()) {
+				REX::LogWarning("PrismaViewBridge: ignoring malformed clearQuestRequested payload '{}'", payload);
+				return;
+			}
+			Dispatch([questId] {
+				if (g_clearQuestCallback) {
+					g_clearQuestCallback(questId);
+				}
+			});
+		}
+
 		void OnGeometryChanged(const char* a_json)
 		{
 			// Fires on PrismaUI's thread; parse + persist on the game thread
@@ -118,6 +154,8 @@ namespace F4DH::Infrastructure
 			g_api->RegisterJSListener(a_view, "requestHistory", &OnRequestHistory);
 			g_api->RegisterJSListener(a_view, "closeRequested", &OnCloseRequested);
 			g_api->RegisterJSListener(a_view, "geometryChanged", &OnGeometryChanged);
+			g_api->RegisterJSListener(a_view, "clearAllRequested", &OnClearAllRequested);
+			g_api->RegisterJSListener(a_view, "clearQuestRequested", &OnClearQuestRequested);
 			g_api->SetViewRole(a_view, PRISMA_UI_API::ViewRole::kPanel);
 			g_api->SetViewOwnsEscape(a_view, true);
 			// Deterministic snapshot replay: the view's requestHistory can fire
@@ -288,6 +326,14 @@ namespace F4DH::Infrastructure
 	{
 		_closeCallback = fn;
 		g_closeCallback = fn;
+	}
+
+	void PrismaViewBridge::SetClearCallbacks(ClearAllCallback allFn, ClearQuestCallback questFn)
+	{
+		_clearAllCallback = allFn;
+		_clearQuestCallback = questFn;
+		g_clearAllCallback = allFn;
+		g_clearQuestCallback = questFn;
 	}
 
 	void PrismaViewBridge::SetFontSize(int fontSize) noexcept

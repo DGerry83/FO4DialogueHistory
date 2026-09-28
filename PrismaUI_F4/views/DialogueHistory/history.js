@@ -1,8 +1,10 @@
 /* FO4 Dialogue History — PrismaUI view.
  * Plugin -> JS: setHistory(array)   full snapshot, oldest first
- *               appendLine(object)  one {speaker, kind, text, questId, questName}
- *                                     (schema v2; older DLLs omit the quest
- *                                      fields — defaults are applied below)
+ *               appendLine(object)  one {speaker, kind, text, questId, questName,
+ *                                     questType} (schema v3; C7 added the raw
+ *                                      QUEST_TYPE integer — v2 DLLs omit it,
+ *                                      v1 DLLs omit the quest fields too;
+ *                                      defaults are applied below)
  *               setFontSize(px)
  *               setGeometry(json)   {"x","y","width","height"} — persisted
  *                                     panel rect; absent/invalid = keep the
@@ -10,6 +12,8 @@
  * JS -> plugin: window.requestHistory() on DOM ready
  *               window.closeRequested() on Esc
  *               window.geometryChanged(json) once per drag end (M5)
+ *               window.clearAllRequested("") / window.clearQuestRequested(
+ *                 "<decimal questId>") on confirmed clear (C5)
  * (RegisterJSListener binds each name as a global window function;
  * window.prisma has no sendEvent — its emit() routes to Papyrus only.)
  * Two-pane model (M4): dhAllLines is the client-side source of truth (the
@@ -48,8 +52,9 @@ const dhAllLines = [];
 let dhSelection = "all";
 
 /* Normalize one raw payload line into the model. Tolerant of old-DLL
- * payloads: missing quest fields default to 0/"", missing speaker/text to
- * "", unknown kind to "unknown". Returns null for non-object input. */
+ * payloads: missing quest fields default to 0/"", missing/non-finite
+ * questType to 0 (Unattributed), missing speaker/text to "", unknown kind
+ * to "unknown". Returns null for non-object input. */
 function dhNormalizeLine(line) {
   line = dhParse(line, null);
   if (!line || typeof line !== "object") {
@@ -60,8 +65,84 @@ function dhNormalizeLine(line) {
     kind: line.kind === "player" || line.kind === "npc" ? line.kind : "unknown",
     text: typeof line.text === "string" ? line.text : "",
     questId: typeof line.questId === "number" ? line.questId : 0,
-    questName: typeof line.questName === "string" ? line.questName : ""
+    questName: typeof line.questName === "string" ? line.questName : "",
+    questType: typeof line.questType === "number" && isFinite(line.questType) ? line.questType : 0
   };
+}
+
+/* C7 — bucket mapping (frozen in GATES.md), implemented ONLY here in the
+ * view: raw 1-5 -> "main", 6 -> "misc", 7 -> "side", >=8 -> "side"
+ * (DLC01-06), 0/missing/invalid -> "unattributed". */
+function dhBucketFor(questType) {
+  if (typeof questType !== "number" || !Number.isInteger(questType)) {
+    return "unattributed";
+  }
+  if (questType >= 1 && questType <= 5) {
+    return "main";
+  }
+  if (questType === 6) {
+    return "misc";
+  }
+  if (questType >= 7) {
+    return "side";
+  }
+  return "unattributed";
+}
+
+/* C7 — friendly per-type display names (never raw enum/DLC names). Values
+ * above the known range get the generic "DLC"; 0/invalid -> Unattributed. */
+const dhTypeNames = {
+  0: "Unattributed",
+  1: "Main Quest",
+  2: "Brotherhood of Steel",
+  3: "Institute",
+  4: "Minutemen",
+  5: "Railroad",
+  6: "Miscellaneous",
+  7: "Side Quests",
+  8: "Automatron",
+  9: "Wasteland Workshop",
+  10: "Far Harbor",
+  11: "Nuka-World",
+  12: "Contraptions Workshop",
+  13: "Vault-Tec Workshop"
+};
+
+function dhTypeName(questType) {
+  if (typeof questType !== "number" || !Number.isInteger(questType) || questType < 0) {
+    return dhTypeNames[0];
+  }
+  if (questType > 13) {
+    return "DLC";
+  }
+  return dhTypeNames[questType];
+}
+
+/* C7 — bucket labels as shown on the index tags and filter checkboxes. */
+const dhBucketLabels = {
+  main: "Main",
+  side: "Side",
+  misc: "Misc",
+  unattributed: "Unattributed"
+};
+
+/* C7 — checkbox ids per bucket. State lives in the DOM (session-only, no
+ * persistence) and defaults to all-checked via the markup; a missing box
+ * (old html) means the bucket stays visible. */
+const dhBuckets = ["main", "side", "misc", "unattributed"];
+
+function dhBucketVisible(bucket) {
+  const box = document.getElementById("ftype-" + bucket);
+  return !box || box.checked;
+}
+
+/* Checkbox change: re-filter the index; the log only when the "All" view is
+ * up (a selected quest's view is unaffected by the checkboxes). */
+function dhFilterChanged() {
+  dhRenderIndex();
+  if (dhSelection === "all") {
+    dhRenderLog();
+  }
 }
 
 /* Display label for a quest bucket: first non-empty questName seen, else the
@@ -74,7 +155,9 @@ function dhQuestLabel(entry) {
 }
 
 /* Group the model on questId. Returns one bucket per questId (including 0),
- * each {questId, key, name, count, last}, sorted by most recent line. */
+ * each {questId, key, name, count, last, type}, sorted by most recent line.
+ * type = the entry's newest line with a numeric questType (0 when none) —
+ * it drives both the entry's C7 bucket and its tooltip name. */
 function dhBuildIndex() {
   const quests = new Map();
   for (let i = 0; i < dhAllLines.length; i++) {
@@ -82,7 +165,7 @@ function dhBuildIndex() {
     const key = String(line.questId);
     let entry = quests.get(key);
     if (!entry) {
-      entry = { questId: line.questId, key: key, name: "", count: 0, last: i };
+      entry = { questId: line.questId, key: key, name: "", count: 0, last: i, type: 0 };
       quests.set(key, entry);
     }
     entry.count += 1;
@@ -90,23 +173,34 @@ function dhBuildIndex() {
     if (!entry.name && line.questName) {
       entry.name = line.questName;
     }
+    if (typeof line.questType === "number" && isFinite(line.questType)) {
+      entry.type = line.questType;
+    }
   }
   const entries = Array.from(quests.values());
   entries.sort(function (a, b) { return b.last - a.last; });
   return entries;
 }
 
-function dhMakeEntry(key, label, count) {
+function dhMakeEntry(key, label, count, type) {
   const row = document.createElement("div");
   row.className = "qentry" + (key === dhSelection ? " active" : "");
   row.dataset.key = key;
   const name = document.createElement("span");
   name.className = "qname";
   name.textContent = label;
+  row.append(name);
+  if (type !== undefined) {  // real quest entries only — "All" gets no tag
+    row.title = dhTypeName(type);
+    const tag = document.createElement("span");
+    tag.className = "qtype";
+    tag.textContent = dhBucketLabels[dhBucketFor(type)];
+    row.append(tag);
+  }
   const num = document.createElement("span");
   num.className = "qcount";
   num.textContent = String(count);
-  row.append(name, num);
+  row.append(num);
   row.addEventListener("click", function () {
     dhSelection = key;
     dhRenderIndex();
@@ -116,9 +210,11 @@ function dhMakeEntry(key, label, count) {
 }
 
 /* Left pane: "All" plus the quest buckets, filtered by the search box on
- * label substring (case-insensitive). Selection is not reset by a search —
- * the right pane keeps showing the selected bucket while its entry is
- * filtered out, and clearing the search restores it. */
+ * label substring (case-insensitive) and by the C7 bucket checkboxes — an
+ * entry hides while its bucket (its newest line's bucket) is unchecked; the
+ * "All" entry is never hidden by a checkbox. Selection is not reset by a
+ * search or a filter — the right pane keeps showing the selected bucket
+ * while its entry is filtered out, and restoring the filter brings it back. */
 function dhRenderIndex() {
   const list = document.getElementById("quests");
   if (!list) {
@@ -135,17 +231,20 @@ function dhRenderIndex() {
     list.append(dhMakeEntry("all", "All", dhAllLines.length));
   }
   for (const entry of dhBuildIndex()) {
+    if (!dhBucketVisible(dhBucketFor(entry.type))) {
+      continue;
+    }
     const label = entry.questId === 0 ? "Unattributed" : dhQuestLabel(entry);
     if (matches(label)) {
-      list.append(dhMakeEntry(entry.key, label, entry.count));
+      list.append(dhMakeEntry(entry.key, label, entry.count, entry.type));
     }
   }
 }
 
-/* Append one model line to the log. autoScroll=true applies the live-append
- * contract (scroll only when already at the bottom); false always snaps. */
-function dhAppendRow(log, line, autoScroll) {
-  const atBottom = log.scrollTop + log.clientHeight >= log.scrollHeight - 4;
+/* Build one log row for a model line: speaker span (per-NPC color on npc
+ * kinds), text span, dataset fields — the exact markup the CSS expects.
+ * Pure construction, no DOM insertion or scrolling; callers own both. */
+function dhMakeRow(line) {
   const row = document.createElement("div");
   row.className = "line " + line.kind;
   row.dataset.questId = String(line.questId);
@@ -160,10 +259,7 @@ function dhAppendRow(log, line, autoScroll) {
   text.className = "text";
   text.textContent = " " + line.text;
   row.append(speaker, text);
-  log.append(row);
-  if (!autoScroll || atBottom) {
-    log.scrollTop = log.scrollHeight;
-  }
+  return row;
 }
 
 /* M5 — movable/resizable panel (geometry persistence is the plugin's job:
@@ -297,17 +393,32 @@ function dhStartSplitDrag(event) {
   document.addEventListener("mouseup", onUp);
 }
 
-/* Right pane: re-render the selected bucket and snap to its newest line. */
+/* Right pane: re-render the selected bucket and snap to its newest line.
+ * Batched (C6a): all matching rows are built into a DocumentFragment, then
+ * one append + one scrollTop write force a single layout pass per render
+ * instead of one synchronous reflow per row. C7: in the "All" view, lines
+ * whose bucket is unchecked are skipped; a directly selected quest's view
+ * is unaffected by the checkboxes (same precedent as search). */
 function dhRenderLog() {
   const log = document.getElementById("log");
-  log.textContent = "";
+  const t0 = performance.now();
+  let rendered = 0;
+  const fragment = document.createDocumentFragment();
   for (const line of dhAllLines) {
-    if (dhSelection === "all" || String(line.questId) === dhSelection) {
-      dhAppendRow(log, line, false);
+    const inSelection = dhSelection === "all"
+      ? dhBucketVisible(dhBucketFor(line.questType))
+      : String(line.questId) === dhSelection;
+    if (inSelection) {
+      fragment.append(dhMakeRow(line));
+      rendered += 1;
     }
   }
-  dhSetEmptyVisible(dhAllLines.length === 0);
+  log.textContent = "";
+  log.append(fragment);
   log.scrollTop = log.scrollHeight;
+  dhSetEmptyVisible(dhAllLines.length === 0);
+  const t1 = performance.now();
+  console.info("[DialogueHistory] render: " + rendered + " rows in " + (t1 - t0).toFixed(1) + " ms");
 }
 
 function setHistory(lines) {
@@ -316,12 +427,20 @@ function setHistory(lines) {
     lines = [];
   }
   // Full snapshot replay (sent on panel open): reset to the defaults —
-  // "All" selected, search cleared — then rebuild model and panes.
+  // "All" selected, search cleared, all C7 bucket filters re-checked
+  // (filter state is session-only — accepted post-replay UX) — then rebuild
+  // model and panes.
   dhAllLines.length = 0;
   dhSelection = "all";
   const search = document.getElementById("search");
   if (search) {
     search.value = "";
+  }
+  for (const bucket of dhBuckets) {
+    const box = document.getElementById("ftype-" + bucket);
+    if (box) {
+      box.checked = true;
+    }
   }
   for (const raw of lines) {
     const line = dhNormalizeLine(raw);
@@ -362,9 +481,19 @@ function appendLine(line) {
   }
   dhAllLines.push(line);
   dhRenderIndex();  // cheap (bounded by the buffer size): recount + resort
-  if (dhSelection === "all" || String(line.questId) === dhSelection) {
+  // C7: mirror dhRenderLog's visibility — never append a hidden-bucket line
+  // into the "All" view; a selected quest's view stays unaffected.
+  const inSelection = dhSelection === "all"
+    ? dhBucketVisible(dhBucketFor(line.questType))
+    : String(line.questId) === dhSelection;
+  if (inSelection) {
+    const log = document.getElementById("log");
+    const atBottom = log.scrollTop + log.clientHeight >= log.scrollHeight - 4;
     dhSetEmptyVisible(false);
-    dhAppendRow(document.getElementById("log"), line, true);
+    log.append(dhMakeRow(line));
+    if (atBottom) {
+      log.scrollTop = log.scrollHeight;
+    }
   }
 }
 
@@ -381,11 +510,76 @@ function dhSend(eventName) {
   }
 }
 
+/* Clear history (C5): one selection-scoped path. The Clear button opens a
+ * confirmation overlay naming the scope; Confirm dispatches to the plugin,
+ * Cancel/Esc hides the overlay without touching the model (Esc must NOT
+ * fall through to closeRequested while the overlay is up). After the
+ * plugin mutates the buffer it re-pushes a snapshot; setHistory's reset
+ * (selection -> "All", search cleared) is the accepted post-clear UX. */
+let dhClearTarget = "all";  // "all" or the decimal questId string
+
+function dhClearScopeText() {
+  if (dhClearTarget === "all") {
+    return "all recorded lines";
+  }
+  for (const entry of dhBuildIndex()) {
+    if (entry.key === dhClearTarget) {
+      return entry.questId === 0 ? "Unattributed" : dhQuestLabel(entry);
+    }
+  }
+  return "the selected quest";
+}
+
+function dhOverlayVisible() {
+  const overlay = document.getElementById("overlay");
+  return !!overlay && !overlay.hidden;
+}
+
+function dhShowClearOverlay() {
+  dhClearTarget = dhSelection;
+  const msg = document.getElementById("overlaymsg");
+  if (msg) {
+    msg.textContent = "Clear " + dhClearScopeText() + "? This cannot be undone.";
+  }
+  const overlay = document.getElementById("overlay");
+  if (overlay) {
+    overlay.hidden = false;
+  }
+}
+
+function dhHideClearOverlay() {
+  const overlay = document.getElementById("overlay");
+  if (overlay) {
+    overlay.hidden = true;
+  }
+}
+
+function dhConfirmClear() {
+  dhHideClearOverlay();
+  if (dhClearTarget === "all") {
+    const fn = window.clearAllRequested;
+    if (typeof fn === "function") {  // registered by the plugin (new DLLs)
+      fn("");
+    }
+  } else {
+    const fn = window.clearQuestRequested;
+    if (typeof fn === "function") {
+      fn(String(dhClearTarget));
+    }
+  }
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   dhSend("requestHistory");
   const search = document.getElementById("search");
   if (search) {
     search.addEventListener("input", dhRenderIndex);
+  }
+  for (const bucket of dhBuckets) {
+    const box = document.getElementById("ftype-" + bucket);
+    if (box) {
+      box.addEventListener("change", dhFilterChanged);
+    }
   }
   const header = document.getElementById("header");
   if (header) {
@@ -399,9 +593,31 @@ document.addEventListener("DOMContentLoaded", () => {
   if (split) {
     split.addEventListener("mousedown", dhStartSplitDrag);
   }
+  const clearBtn = document.getElementById("clear");
+  if (clearBtn) {
+    // The header is the panel drag handle: keep this mousedown from
+    // bubbling into dhStartDrag ("move"), which would also fire a
+    // spurious geometryChanged on mouseup.
+    clearBtn.addEventListener("mousedown", function (event) {
+      event.stopPropagation();
+    });
+    clearBtn.addEventListener("click", dhShowClearOverlay);
+  }
+  const overlayConfirm = document.getElementById("overlayconfirm");
+  if (overlayConfirm) {
+    overlayConfirm.addEventListener("click", dhConfirmClear);
+  }
+  const overlayCancel = document.getElementById("overlaycancel");
+  if (overlayCancel) {
+    overlayCancel.addEventListener("click", dhHideClearOverlay);
+  }
   document.addEventListener("keydown", (event) => {
     // Ultralight reports Escape as "Unidentified" — match by keyCode.
     if (event.key === "Escape" || event.keyCode === 27) {
+      if (dhOverlayVisible()) {
+        dhHideClearOverlay();  // dismiss only; the panel stays open
+        return;
+      }
       dhSend("closeRequested");
     }
   });

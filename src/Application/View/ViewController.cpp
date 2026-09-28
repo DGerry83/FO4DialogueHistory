@@ -1,31 +1,51 @@
 #include "ViewController.h"
 
+#include <format>
+
 #include "Core/Dialogue/PayloadBuilder.h"
 
 namespace F4DH::Application
 {
 	namespace
 	{
-		ViewController* g_closeTarget{ nullptr };
+		// Single routing target for every global thunk (close + clear), set
+		// by SetCloseTarget at composition time.
+		ViewController* g_target{ nullptr };
 
 		void CloseThunk()
 		{
-			if (g_closeTarget) {
-				g_closeTarget->OnCloseRequested();
+			if (g_target) {
+				g_target->OnCloseRequested();
+			}
+		}
+
+		void ClearAllThunk()
+		{
+			if (g_target) {
+				g_target->OnClearAll();
+			}
+		}
+
+		void ClearQuestThunk(std::uint32_t questId)
+		{
+			if (g_target) {
+				g_target->OnClearQuest(questId);
 			}
 		}
 	}
 
 	void ViewController::SetCloseTarget(ViewController* instance) noexcept
 	{
-		g_closeTarget = instance;
+		g_target = instance;
 	}
 
-	ViewController::ViewController(Core::DialogueBuffer& buffer, IViewBridge& bridge) :
+	ViewController::ViewController(Core::DialogueBuffer& buffer, IViewBridge& bridge, Core::ILogger& logger) :
 		_buffer(buffer),
-		_bridge(bridge)
+		_bridge(bridge),
+		_logger(logger)
 	{
 		_bridge.SetCloseCallback(&CloseThunk);
+		_bridge.SetClearCallbacks(&ClearAllThunk, &ClearQuestThunk);
 	}
 
 	void ViewController::Toggle()
@@ -52,6 +72,20 @@ namespace F4DH::Application
 		if (_state == ViewState::Open) {
 			Close();
 		}
+	}
+
+	void ViewController::OnClearAll()
+	{
+		_buffer.Clear();
+		_logger.Info("clear history: removed all lines");
+		_bridge.PushSnapshot(Core::PayloadBuilder::BuildSnapshot(_buffer.Snapshot()));
+	}
+
+	void ViewController::OnClearQuest(std::uint32_t questId)
+	{
+		const auto removed = _buffer.RemoveQuest(questId);
+		_logger.Info(std::format("clear history: removed {} line(s) for questId {}", removed, questId));
+		_bridge.PushSnapshot(Core::PayloadBuilder::BuildSnapshot(_buffer.Snapshot()));
 	}
 
 	void ViewController::Open()

@@ -16,7 +16,7 @@ namespace
 	// constants, matching the fourcc spelling byte-for-byte in the gates.
 	constexpr std::uint32_t kUniqueID = 'DLGH';
 	constexpr std::uint32_t kRecordType = 'HIST';
-	constexpr std::uint32_t kRecordVersion = 1;
+	constexpr std::uint32_t kRecordVersion = 2;  // v2 = +questType per line; loader also accepts v1
 
 	F4DH::Core::DialogueBuffer* g_buffer{ nullptr };  // bound at game-data-ready
 
@@ -44,7 +44,7 @@ namespace
 		std::uint32_t version = 0;
 		std::uint32_t size = 0;
 		while (a_ser->GetNextRecordInfo(type, version, size)) {
-			if (type != kRecordType || version != kRecordVersion) {
+			if (type != kRecordType || (version != 1 && version != 2)) {
 				continue;  // unknown record — skip without reading; no abort
 			}
 			if (!buffer) {
@@ -60,7 +60,7 @@ namespace
 			}
 
 			std::vector<F4DH::Core::DialogueLine> lines;
-			if (!F4DH::Core::CosaveCodec::Decode(payload, lines)) {
+			if (!F4DH::Core::CosaveCodec::Decode(payload, lines, version)) {
 				REX::LogError("cosave: malformed HIST record ({} bytes) — history cleared", size);
 				return;  // graceful rejection: buffer stays cleared
 			}
@@ -90,7 +90,7 @@ namespace F4DH::Infrastructure
 		ser->SetSaveCallback(SaveCallback);
 		ser->SetLoadCallback(LoadCallback);
 		ser->SetRevertCallback(RevertCallback);
-		REX::LogInformation("cosave: persistence registered (unique ID 'DLGH', record 'HIST' v1)");
+		REX::LogInformation("cosave: persistence registered (unique ID 'DLGH', record 'HIST' v2, loads v1+v2)");
 	}
 
 	void CosaveStore::Bind(Core::DialogueBuffer* a_buffer)

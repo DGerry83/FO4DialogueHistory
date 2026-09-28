@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
 
 namespace F4DH::Application
@@ -9,6 +10,8 @@ namespace F4DH::Application
 	{
 	public:
 		using CloseCallback = void (*)();
+		using ClearAllCallback = void (*)();
+		using ClearQuestCallback = void (*)(std::uint32_t);
 
 		virtual ~IViewBridge() = default;
 
@@ -20,6 +23,7 @@ namespace F4DH::Application
 		virtual void PushSnapshot(const std::string& json) = 0;
 		virtual void AppendLine(const std::string& json) = 0;
 		virtual void SetCloseCallback(CloseCallback fn) = 0;
+		virtual void SetClearCallbacks(ClearAllCallback allFn, ClearQuestCallback questFn) = 0;
 		[[nodiscard]] virtual bool IsHealthy() = 0;
 	};
 }

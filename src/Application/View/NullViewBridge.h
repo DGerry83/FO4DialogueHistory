@@ -17,6 +17,7 @@ namespace F4DH::Application
 		void PushSnapshot(const std::string&) override {}
 		void AppendLine(const std::string&) override {}
 		void SetCloseCallback(CloseCallback) override {}
+		void SetClearCallbacks(ClearAllCallback, ClearQuestCallback) override {}
 		[[nodiscard]] bool IsHealthy() override { return false; }
 	};
 }

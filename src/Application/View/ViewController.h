@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Core/Dialogue/DialogueBuffer.h"
+#include "Core/ILogger.h"
 #include "IViewBridge.h"
 
 namespace F4DH::Application
@@ -16,14 +17,19 @@ namespace F4DH::Application
 	class ViewController
 	{
 	public:
-		ViewController(Core::DialogueBuffer& buffer, IViewBridge& bridge);
+		ViewController(Core::DialogueBuffer& buffer, IViewBridge& bridge, Core::ILogger& logger);
 
 		void Toggle();       // hotkey
 		void NotifyLine();   // a new line was recorded; append if Open
 		void OnCloseRequested();  // Esc / JS closeRequested
 
-		// Composition sets the instance the global close thunk routes to
-		// (plain function pointers are instance-unaware).
+		// Confirmed clear-history requests from the view (routed through
+		// the bridge's clear callbacks).
+		void OnClearAll();
+		void OnClearQuest(std::uint32_t questId);
+
+		// Composition sets the instance the global thunks (close + clear)
+		// route to (plain function pointers are instance-unaware).
 		static void SetCloseTarget(ViewController* instance) noexcept;
 
 		[[nodiscard]] ViewState State() const { return _state; }
@@ -34,6 +40,7 @@ namespace F4DH::Application
 
 		Core::DialogueBuffer& _buffer;
 		IViewBridge&          _bridge;
+		Core::ILogger&        _logger;
 		ViewState             _state = ViewState::Hidden;
 	};
 }

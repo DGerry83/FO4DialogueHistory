@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <deque>
 #include <mutex>
 #include <vector>
@@ -11,8 +12,9 @@ namespace F4DH::Core
 {
 	// FIFO buffer of the most recent dialogue lines. Capacity 0 = unlimited
 	// (no eviction); >0 retains only the newest `capacity` lines.
-	// Thread-safe: the subtitle hook pushes on the game thread while the
-	// hotkey path snapshots on a UIJob worker thread (2026-09-27 crash fix).
+	// Thread-safe: the subtitle hook pushes from multiple engine threads
+	// (U1b runtime evidence, 2026-09-28) while the hotkey path snapshots on a
+	// UIJob worker thread (2026-09-27 crash fix) — all access under _mutex.
 	class DialogueBuffer
 	{
 	public:
@@ -33,6 +35,17 @@ namespace F4DH::Core
 		{
 			const std::lock_guard lock(_mutex);
 			_lines.clear();
+		}
+
+		// Erases every line owned by the given quest (0 = unattributed).
+		// Returns the number of removed lines; the relative order of the
+		// surviving lines is preserved.
+		[[nodiscard]] std::size_t RemoveQuest(std::uint32_t questId)
+		{
+			const std::lock_guard lock(_mutex);
+			const auto            before = _lines.size();
+			std::erase_if(_lines, [questId](const DialogueLine& line) { return line.questId == questId; });
+			return before - _lines.size();
 		}
 
 		[[nodiscard]] std::size_t Size() const

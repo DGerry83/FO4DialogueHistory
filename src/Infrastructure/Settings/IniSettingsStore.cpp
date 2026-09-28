@@ -16,7 +16,7 @@
 // Reads FO4DialogueHistory.ini from the folder that hosts this DLL
 // (Data/F4SE/Plugins under the game root — resolved via the module path so
 // non-standard Data locations still work). One-shot parse at kGameDataReady;
-// no file I/O anywhere else. Hand-rolled: three keys, no dependency.
+// no file I/O anywhere else. Hand-rolled: four keys, no dependency.
 //
 // M9: panel geometry lives in a SIBLING file (FO4DialogueHistory.geometry.ini)
 // that release packages never ship, so redeploying the mod folder can no
@@ -168,7 +168,9 @@ namespace F4DH::Infrastructure
 			REX::LogWarning(L"FO4DialogueHistory.ini not found ({}); using defaults", path);
 		}
 
-		bool inSettingsSection{ false };
+		// Section tracking: [Settings] holds the capture/display schema,
+		// [Diagnostics] the logging switches. Unknown sections are ignored.
+		std::string currentSection;
 
 		for (const auto& line : lines) {
 			std::string_view view{ line };
@@ -183,7 +185,7 @@ namespace F4DH::Infrastructure
 			}
 
 			if (view.front() == '[' && view.back() == ']') {
-				inSettingsSection = ToLower(Trim(view.substr(1, view.size() - 2))) == "settings";
+				currentSection = ToLower(Trim(view.substr(1, view.size() - 2)));
 				continue;
 			}
 
@@ -191,12 +193,28 @@ namespace F4DH::Infrastructure
 			if (eq == std::string_view::npos) {
 				continue;  // not a key/value line
 			}
-			if (!inSettingsSection) {
-				continue;  // locked schema reads [Settings] only
-			}
 
 			const auto key   = ToLower(Trim(view.substr(0, eq)));
 			const auto value = Trim(view.substr(eq + 1));
+
+			if (currentSection == "diagnostics") {
+				if (key == "verbosecapture") {
+					std::uint32_t parsed = 0;
+					if (!ParseUint(value, parsed)) {
+						REX::LogWarning("IniSettingsStore: invalid VerboseCapture '{}' — keeping default 0 (off)", value);
+					} else if (parsed > 1) {
+						settings.verboseCapture = true;
+						REX::LogWarning("IniSettingsStore: VerboseCapture {} out of range 0-1 — clamped to 1", parsed);
+					} else {
+						settings.verboseCapture = parsed == 1;
+					}
+				}
+				continue;  // unknown [Diagnostics] keys ignored
+			}
+
+			if (currentSection != "settings") {
+				continue;  // locked schema reads [Settings] and [Diagnostics] only
+			}
 
 			std::uint32_t parsed = 0;
 			const bool    ok = ParseUint(value, parsed);

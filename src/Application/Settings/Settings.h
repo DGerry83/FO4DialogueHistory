@@ -17,6 +17,7 @@ namespace F4DH::Application
 		std::uint32_t hotkeyScanCode = 35;  // provisional: DIK_H — verified against vanilla binds in milestone 4 (AC9)
 		std::size_t   bufferSize = 0;       // 0 = unlimited (no eviction); >0 caps, range 10–500
 		int           fontSize = 16;        // range 10–32 (px)
+		bool          verboseCapture = false;  // [Diagnostics] VerboseCapture: log every subtitle event at Information level
 		std::optional<Core::PanelGeometry> panelGeometry;  // absent = default centered layout
 	};
 }

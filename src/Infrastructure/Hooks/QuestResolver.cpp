@@ -18,6 +18,7 @@
 #include "REX/Log.hpp"
 
 #include <format>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -25,12 +26,22 @@
 
 namespace
 {
+	// H1: ShowSubtitle fires from multiple threads (U1b), so the log-dedup
+	// seen-sets below are guarded by one shared mutex. The lock is held only
+	// for the check+insert — never across REX::Log or any engine call.
+	std::mutex g_seenSetLock;
+
 	void LogOncePerQuest(std::uint32_t a_questId, const std::string& a_questName, const char* a_via)
 	{
-		// Game-thread only (called from the ShowSubtitle thunk path) — the
-		// seen-set needs no lock. Bounded by distinct quests, not line count.
+		// Multi-threaded hook path — the seen-set needs the check+insert lock.
+		// Bounded by distinct quests, not line count.
 		static std::unordered_set<std::uint32_t> seen;
-		if (!seen.insert(a_questId).second) {
+		bool inserted = false;
+		{
+			const std::scoped_lock lock(g_seenSetLock);
+			inserted = seen.insert(a_questId).second;
+		}
+		if (!inserted) {
 			return;
 		}
 		REX::LogInformation("quest resolved: '{}' (id {:08X}) via {}", a_questName, a_questId, a_via);
@@ -53,14 +64,19 @@ namespace
 	}
 
 	// Resolves one "<alias=name>" token against the quest's filled aliases.
-	// One bounded diagnostic line per quest+token pair (game thread only —
-	// the seen-set needs no lock). Exists to pin down which resolution step
-	// misses for radiant tokens in the field.
+	// One bounded diagnostic line per quest+token pair (multi-threaded hook
+	// path — the seen-set needs the check+insert lock). Exists to pin down
+	// which resolution step misses for radiant tokens in the field.
 	void LogAliasOnce(std::uint32_t a_questId, std::string_view a_token, const std::string& a_detail)
 	{
 		static std::unordered_set<std::string> seen;
 		const std::string key = std::format("{:08X}:{}", a_questId, a_token);
-		if (!seen.insert(key).second) {
+		bool              inserted = false;
+		{
+			const std::scoped_lock lock(g_seenSetLock);
+			inserted = seen.insert(key).second;
+		}
+		if (!inserted) {
 			return;
 		}
 		REX::LogInformation("alias resolve [{}]: {}", key, a_detail);
@@ -226,6 +242,8 @@ namespace F4DH::Infrastructure
 		}
 
 		result.questId = quest->formID;
+		// Inline member read on the already-held quest — no engine call.
+		result.questType = quest->data.type.underlying();
 		if (const char* name = quest->fullName.data(); name && name[0] != '\0') {
 			result.questName = name;
 			// Radiant quests carry raw "<alias=...>" placeholders in fullName;

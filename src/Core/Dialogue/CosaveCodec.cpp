@@ -110,13 +110,18 @@ namespace F4DH::Core
 			WriteString(out, line.speaker);
 			WriteString(out, line.text);
 			WriteString(out, line.questName);
+			WriteU8(out, line.questType);  // v2 layout
 		}
 		return out;
 	}
 
-	bool CosaveCodec::Decode(std::span<const std::byte> a_data, std::vector<DialogueLine>& a_outLines)
+	bool CosaveCodec::Decode(std::span<const std::byte> a_data, std::vector<DialogueLine>& a_outLines, std::uint32_t a_version)
 	{
 		a_outLines.clear();
+
+		if (a_version < 1 || a_version > 2) {
+			return false;  // unknown layout — fail closed
+		}
 
 		Reader reader(a_data);
 		std::uint32_t count = 0;
@@ -136,11 +141,16 @@ namespace F4DH::Core
 			if (!reader.String(line.speaker) || !reader.String(line.text) || !reader.String(line.questName)) {
 				return false;
 			}
+			if (a_version == 2) {
+				if (!reader.U8(line.questType)) {
+					return false;
+				}
+			}  // v1: questType stays 0 (kNone)
 			a_outLines.push_back(std::move(line));
 		}
 
 		// A well-formed payload is consumed exactly; trailing bytes mean the
-		// record is not a v1 buffer payload.
+		// record is not a buffer payload of the claimed version.
 		return reader.AtEnd();
 	}
 }

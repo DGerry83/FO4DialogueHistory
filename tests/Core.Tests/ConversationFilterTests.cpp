@@ -8,13 +8,15 @@ namespace
 		bool menuOpen,
 		bool sceneIsPlayerDialogue,
 		bool speakerIsPlayer,
-		bool spokenToPlayer)
+		bool spokenToPlayer,
+		std::int32_t questType = 0)
 	{
 		F4DH::Core::SubtitleEvent event;
 		event.menuOpen = menuOpen;
 		event.sceneIsPlayerDialogue = sceneIsPlayerDialogue;
 		event.speakerIsPlayer = speakerIsPlayer;
 		event.spokenToPlayer = spokenToPlayer;
+		event.questType = questType;
 		return event;
 	}
 }
@@ -76,4 +78,24 @@ TEST_CASE("spokenToPlayer alone with an NPC speaker is rejected")
 TEST_CASE("player speaker addressing the player is accepted")
 {
 	REQUIRE(F4DH::Core::ConversationFilter::IsConversationDialogue(MakeEvent(false, false, true, true)));
+}
+
+TEST_CASE("NPC line owned by a typed quest is accepted with all gates false (C4)")
+{
+	// Scene-less staged quest performance shape: "How to HQ" (type=1 MainQuest)
+	// field capture, 2026-09-28.
+	REQUIRE(F4DH::Core::ConversationFilter::IsConversationDialogue(MakeEvent(false, false, false, false, 1)));
+}
+
+TEST_CASE("NPC line owned by a type-less bark-holder quest stays rejected")
+{
+	// DialogueGeneric / Conv* / AO_* holders are kNone — the bark case.
+	REQUIRE_FALSE(F4DH::Core::ConversationFilter::IsConversationDialogue(MakeEvent(false, false, false, false, 0)));
+}
+
+TEST_CASE("player solo line from a typed holder quest stays rejected (user ruling 2026-09-28)")
+{
+	// "People comments about you" (type=6 Misc) solo player voice lines:
+	// closed wontfix — the quest-type branch is scoped to non-player speakers.
+	REQUIRE_FALSE(F4DH::Core::ConversationFilter::IsConversationDialogue(MakeEvent(false, false, true, false, 6)));
 }

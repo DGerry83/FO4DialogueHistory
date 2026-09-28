@@ -16,7 +16,9 @@ namespace F4DH::Core
 		bool        menuOpen = false;              // MenuTopicManager::menuOpen at capture time
 		bool        sceneIsPlayerDialogue = false; // topicInfo scene has BGSScene::kPlayerDialogue
 		bool        spokenToPlayer = false;        // ShowSubtitle's spokenToPlayer argument
+		bool        hasScene = false;              // topicInfo->GetScene() != nullptr at capture time
 		std::uint32_t questId = 0;                 // owning quest formID, 0 = unattributed
 		std::string   questName;                   // owning quest name, empty = unattributed
+		std::int32_t  questType = 0;               // raw QUEST_DATA.type, 0 = kNone
 	};
 }

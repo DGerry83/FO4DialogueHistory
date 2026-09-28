@@ -59,6 +59,7 @@ namespace F4DH::Core
 			"\",\"kind\":\"" + kind +
 			"\",\"text\":\"" + Escape(line.text) +
 			"\",\"questId\":" + std::to_string(line.questId) +
-			",\"questName\":\"" + Escape(line.questName) + "\"}";
+			",\"questName\":\"" + Escape(line.questName) +
+			"\",\"questType\":" + std::to_string(line.questType) + "}";
 	}
 }

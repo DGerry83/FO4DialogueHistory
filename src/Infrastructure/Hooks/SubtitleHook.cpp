@@ -162,11 +162,13 @@ namespace
 		const auto topicManager = RE::MenuTopicManager::GetSingleton();
 		event.menuOpen = topicManager ? topicManager->menuOpen : false;
 		event.sceneIsPlayerDialogue = IsPlayerDialogueScene(a_topicInfo);
+		event.hasScene = a_topicInfo && a_topicInfo->GetScene() != nullptr;
 		event.spokenToPlayer = a_spokenToPlayer;
 
 		const auto quest = F4DH::Infrastructure::QuestResolver::Resolve(a_topicInfo);
 		event.questId = quest.questId;
 		event.questName = quest.questName;
+		event.questType = quest.questType;
 
 		g_sink->OnSubtitle(event);
 	}
