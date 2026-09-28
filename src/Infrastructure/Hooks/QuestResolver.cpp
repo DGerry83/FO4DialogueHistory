@@ -4,8 +4,10 @@
 
 #include "RE/B/BGSLocAlias.hpp"
 #include "RE/B/BGSLocation.hpp"
+#include "RE/B/BGSQuestInstanceText.hpp"
 #include "RE/B/BGSRefAlias.hpp"
 #include "RE/B/BGSScene.hpp"
+#include "RE/B/BSStringT.hpp"
 #include "RE/B/BSSpinLock.hpp"
 #include "RE/T/TESNPC.hpp"
 #include "RE/T/TESObjectREFR.hpp"
@@ -135,12 +137,23 @@ namespace F4DH::Infrastructure
 		result.questId = quest->formID;
 		if (const char* name = quest->fullName.data(); name && name[0] != '\0') {
 			result.questName = name;
-			// Radiant quests carry raw "<alias=...>" placeholders in fullName
-			// (M7); substitute what can be resolved, keep the rest verbatim.
+			// Radiant quests carry raw "<alias=...>" placeholders in fullName.
+			// Preferred: the engine's own substitution (ParseString resolves
+			// conditional fills, ref/loc aliases, globals — exactly what the
+			// pip-boy shows; OG-verified REL::ID 141681). The M7 hand-rolled
+			// chain remains as the fallback when no instance data exists.
 			if (Core::AliasTokens::ContainsToken(result.questName)) {
-				result.questName = Core::AliasTokens::Substitute(result.questName, [&](std::string_view token) {
-					return ResolveAliasName(quest, token);
-				});
+				if (!quest->instanceDataArray.empty()) {
+					RE::BSString engineName{ name };
+					RE::BGSQuestInstanceText::ParseString(&engineName, quest, quest->currentInstanceID);
+					if (const char* resolved = engineName.c_str(); resolved && resolved[0] != '\0') {
+						result.questName = resolved;
+					}
+				} else {
+					result.questName = Core::AliasTokens::Substitute(result.questName, [&](std::string_view token) {
+						return ResolveAliasName(quest, token);
+					});
+				}
 			}
 		} else if (const char* editorID = quest->GetFormEditorID(); editorID && editorID[0] != '\0') {
 			result.questName = editorID;
