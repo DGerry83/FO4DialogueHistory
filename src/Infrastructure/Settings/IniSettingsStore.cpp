@@ -3,9 +3,12 @@
 #include <algorithm>
 #include <charconv>
 #include <cctype>
+#include <format>
 #include <fstream>
+#include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "REX/Log.hpp"
 #include "REX/W32/KERNEL32.hpp"
@@ -82,6 +85,16 @@ namespace F4DH::Infrastructure
 
 		bool        inSettingsSection{ false };
 		std::string line;
+
+		// M5 panel geometry — all four keys must be present and sane, else the
+		// default centered layout stays. Coordinates are unsigned (the view
+		// clamps the panel inside the viewport) with a generous upper bound.
+		constexpr std::uint32_t kMaxPanelExtent{ 16384 };
+		std::optional<std::uint32_t> panelX;
+		std::optional<std::uint32_t> panelY;
+		std::optional<std::uint32_t> panelWidth;
+		std::optional<std::uint32_t> panelHeight;
+
 		while (std::getline(in, line)) {
 			std::string_view view{ line };
 
@@ -137,10 +150,111 @@ namespace F4DH::Infrastructure
 				} else {
 					settings.fontSize = static_cast<int>(parsed);
 				}
+			} else if (key == "panelx") {
+				if (ok) {
+					panelX = parsed;
+				}
+			} else if (key == "panely") {
+				if (ok) {
+					panelY = parsed;
+				}
+			} else if (key == "panelwidth") {
+				if (ok) {
+					panelWidth = parsed;
+				}
+			} else if (key == "panelheight") {
+				if (ok) {
+					panelHeight = parsed;
+				}
 			}
 			// Unknown keys are ignored.
 		}
 
+		if (panelX && panelY && panelWidth && panelHeight &&
+			*panelWidth >= Core::kPanelMinWidth && *panelWidth <= kMaxPanelExtent &&
+			*panelHeight >= Core::kPanelMinHeight && *panelHeight <= kMaxPanelExtent &&
+			*panelX <= kMaxPanelExtent && *panelY <= kMaxPanelExtent) {
+			settings.panelGeometry = Core::PanelGeometry{
+				static_cast<int>(*panelX),
+				static_cast<int>(*panelY),
+				static_cast<int>(*panelWidth),
+				static_cast<int>(*panelHeight)
+			};
+		} else if (panelX || panelY || panelWidth || panelHeight) {
+			REX::LogWarning("IniSettingsStore: incomplete or invalid panel geometry — using default centered layout");
+		}
+
 		return settings;
+	}
+
+	void IniSettingsStore::SaveGeometry(const Core::PanelGeometry& a_geometry)
+	{
+		const auto path = ResolveIniPath();
+
+		// Rewrite the file, preserving every foreign line verbatim. The four
+		// panel keys are kept in one block directly under the [Settings]
+		// header; a missing file/section gets one created. Runs on the game
+		// thread at mouseup cadence (user gesture) — bounded and infrequent.
+		std::vector<std::string> lines;
+		{
+			std::ifstream in(path);
+			std::string   line;
+			while (std::getline(in, line)) {
+				lines.push_back(line);  // keeps any existing \r; re-emitted verbatim
+			}
+		}
+
+		const auto isPanelKey = [](std::string_view a_line) {
+			std::string_view view{ a_line };
+			if (!view.empty() && view.back() == '\r') {
+				view.remove_suffix(1);
+			}
+			const auto eq = view.find('=');
+			if (eq == std::string_view::npos) {
+				return false;
+			}
+			const auto key = ToLower(Trim(view.substr(0, eq)));
+			return key == "panelx" || key == "panely" || key == "panelwidth" || key == "panelheight";
+		};
+
+		const auto block = std::format("PanelX = {}\nPanelY = {}\nPanelWidth = {}\nPanelHeight = {}",
+			a_geometry.x, a_geometry.y, a_geometry.width, a_geometry.height);
+
+		std::vector<std::string> out;
+		bool                     inserted{ false };
+		for (const auto& raw : lines) {
+			if (isPanelKey(raw)) {
+				continue;  // stale value; the fresh block below is the only copy
+			}
+			out.push_back(raw);
+			std::string_view view{ raw };
+			if (!view.empty() && view.back() == '\r') {
+				view.remove_suffix(1);
+			}
+			view = Trim(view);
+			if (!inserted && view.size() >= 2 && view.front() == '[' && view.back() == ']' &&
+				ToLower(Trim(view.substr(1, view.size() - 2))) == "settings") {
+				out.push_back(block);
+				inserted = true;
+			}
+		}
+		if (!inserted) {
+			if (!out.empty() && !out.back().empty()) {
+				out.emplace_back();  // blank separator before the new section
+			}
+			out.emplace_back("[Settings]");
+			out.push_back(block);
+		}
+
+		std::ofstream file(path, std::ios::binary | std::ios::trunc);
+		if (!file) {
+			REX::LogError(L"IniSettingsStore: failed to open {} for writing — geometry not persisted", path);
+			return;
+		}
+		for (const auto& outLine : out) {
+			file << outLine << '\n';
+		}
+		REX::LogInformation("IniSettingsStore: panel geometry saved ({}x{} at {},{})",
+			a_geometry.width, a_geometry.height, a_geometry.x, a_geometry.y);
 	}
 }

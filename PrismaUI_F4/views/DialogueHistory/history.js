@@ -3,8 +3,13 @@
  *               appendLine(object)  one {speaker, kind, text, questId, questName}
  *                                     (schema v2; older DLLs omit the quest
  *                                      fields — defaults are applied below)
+ *               setFontSize(px)
+ *               setGeometry(json)   {"x","y","width","height"} — persisted
+ *                                     panel rect; absent/invalid = keep the
+ *                                     default centered layout
  * JS -> plugin: window.requestHistory() on DOM ready
  *               window.closeRequested() on Esc
+ *               window.geometryChanged(json) once per drag end (M5)
  * (RegisterJSListener binds each name as a global window function;
  * window.prisma has no sendEvent — its emit() routes to Papyrus only.)
  * Two-pane model (M4): dhAllLines is the client-side source of truth (the
@@ -159,6 +164,101 @@ function dhAppendRow(log, line, autoScroll) {
   }
 }
 
+/* M5 — movable/resizable panel (geometry persistence is the plugin's job:
+ * JS reports the final rect ONCE per drag end via geometryChanged; the plugin
+ * pushes setGeometry back when the panel opens). Clamping is duplicated on
+ * both sides — each side clamps what it owns at the time. */
+const dhMinPanelWidth = 320;
+const dhMinPanelHeight = 200;
+
+function dhViewportSize() {
+  return {
+    width: window.innerWidth || document.documentElement.clientWidth,
+    height: window.innerHeight || document.documentElement.clientHeight
+  };
+}
+
+function dhClampGeometry(geo) {
+  const view = dhViewportSize();
+  const width = Math.max(dhMinPanelWidth, Math.round(geo.width));
+  const height = Math.max(dhMinPanelHeight, Math.round(geo.height));
+  const x = Math.min(Math.max(0, Math.round(geo.x)), Math.max(0, view.width - width));
+  const y = Math.min(Math.max(0, Math.round(geo.y)), Math.max(0, view.height - height));
+  return { x: x, y: y, width: width, height: height };
+}
+
+/* Switch from margin-centering to absolute positioning at the given rect. */
+function dhApplyGeometry(geo) {
+  const panel = document.getElementById("panel");
+  geo = dhClampGeometry(geo);
+  panel.style.position = "absolute";
+  panel.style.margin = "0";
+  panel.style.left = geo.x + "px";
+  panel.style.top = geo.y + "px";
+  panel.style.width = geo.width + "px";
+  panel.style.height = geo.height + "px";
+}
+
+/* Plugin -> JS: apply persisted geometry on open. Absent/invalid payloads
+ * leave the default centered layout untouched. */
+function setGeometry(json) {
+  const geo = dhParse(json, null);
+  if (!geo || typeof geo !== "object") {
+    return;
+  }
+  const x = Number(geo.x);
+  const y = Number(geo.y);
+  const width = Number(geo.width);
+  const height = Number(geo.height);
+  if (!isFinite(x) || !isFinite(y) || !isFinite(width) || !isFinite(height) || width <= 0 || height <= 0) {
+    return;
+  }
+  dhApplyGeometry({ x: x, y: y, width: width, height: height });
+}
+
+function dhPanelRect() {
+  const panel = document.getElementById("panel");
+  return { x: panel.offsetLeft, y: panel.offsetTop, width: panel.offsetWidth, height: panel.offsetHeight };
+}
+
+/* Header drag-move / grip drag-resize. PrismaUI delivers the full mouse
+ * stream to the focused view and holds native capture during drags, so
+ * document-level mousemove/mouseup keep firing outside the panel. The final
+ * geometry is reported exactly once, on mouseup (never per mousemove). */
+function dhStartDrag(mode) {
+  return function (event) {
+    if (event.button !== 0) {
+      return;
+    }
+    const start = dhPanelRect();
+    const origin = { x: event.clientX, y: event.clientY };
+    dhApplyGeometry(start);  // absolute at the current resolved spot, no jump
+    event.preventDefault();
+
+    function onMove(moveEvent) {
+      const dx = moveEvent.clientX - origin.x;
+      const dy = moveEvent.clientY - origin.y;
+      if (mode === "move") {
+        dhApplyGeometry({ x: start.x + dx, y: start.y + dy, width: start.width, height: start.height });
+      } else {
+        dhApplyGeometry({ x: start.x, y: start.y, width: start.width + dx, height: start.height + dy });
+      }
+    }
+    function onUp() {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      const rect = dhPanelRect();
+      const payload = JSON.stringify({ x: rect.x, y: rect.y, width: rect.width, height: rect.height });
+      const fn = window.geometryChanged;
+      if (typeof fn === "function") {  // registered by the plugin (new DLLs)
+        fn(payload);
+      }
+    }
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  };
+}
+
 /* Right pane: re-render the selected bucket and snap to its newest line. */
 function dhRenderLog() {
   const log = document.getElementById("log");
@@ -241,6 +341,14 @@ document.addEventListener("DOMContentLoaded", () => {
   const search = document.getElementById("search");
   if (search) {
     search.addEventListener("input", dhRenderIndex);
+  }
+  const header = document.getElementById("header");
+  if (header) {
+    header.addEventListener("mousedown", dhStartDrag("move"));
+  }
+  const grip = document.getElementById("grip");
+  if (grip) {
+    grip.addEventListener("mousedown", dhStartDrag("resize"));
   }
   document.addEventListener("keydown", (event) => {
     // Ultralight reports Escape as "Unidentified" — match by keyCode.

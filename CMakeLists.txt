@@ -35,6 +35,7 @@ add_library(${PROJECT_NAME} SHARED
 	src/Composition.cpp
 	src/Core/Dialogue/PayloadBuilder.cpp
 	src/Core/Dialogue/CosaveCodec.cpp
+	src/Core/Geometry/PanelGeometry.cpp
 	src/Application/Capture/CapturePipeline.cpp
 	src/Application/View/ViewController.cpp
 	src/Application/Input/HotkeyController.cpp

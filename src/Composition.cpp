@@ -184,6 +184,8 @@ namespace F4DH
 		static InputSink                           inputSink(hotkey, root.log, matchCode, root.settings.hotkeyScanCode);
 
 		bridge.SetFontSize(root.settings.fontSize);
+		bridge.SetGeometry(root.settings.panelGeometry);
+		bridge.SetSettingsSink(&settingsStore);
 		Application::ViewController::SetCloseTarget(&viewController);
 
 		if (const auto menuControls = RE::MenuControls::GetSingleton()) {

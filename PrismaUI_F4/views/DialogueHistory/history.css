@@ -8,6 +8,7 @@ html, body {
 }
 
 #panel {
+  position: relative;  /* M5: anchors the grip; margin-centering default kept */
   width: 60vw;
   height: 70vh;
   margin: 15vh auto;
@@ -27,6 +28,32 @@ html, body {
   font-variant: small-caps;
   padding: 6px 10px;
   border-bottom: 1px solid #2B5B2B;
+  user-select: none;  /* M5: header is the drag handle */
+}
+
+/* M5: bottom-right resize grip. The compositor cursor is PrismaUI's, so the
+ * affordance is drawn in-page as nested corner brackets; cursor styles are
+ * set anyway (harmless where honored). */
+#grip {
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  width: 16px;
+  height: 16px;
+  cursor: nwse-resize;
+  user-select: none;
+  border-right: 2px solid #4C8A4C;
+  border-bottom: 2px solid #4C8A4C;
+}
+#grip::after {
+  content: "";
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  width: 7px;
+  height: 7px;
+  border-right: 2px solid #4C8A4C;
+  border-bottom: 2px solid #4C8A4C;
 }
 
 #hint {

@@ -20,8 +20,10 @@ add_executable(Core.Tests
 	ConversationFilterTests.cpp
 	PayloadBuilderTests.cpp
 	CosaveCodecTests.cpp
+	PanelGeometryTests.cpp
 	${CMAKE_SOURCE_DIR}/src/Core/Dialogue/PayloadBuilder.cpp
 	${CMAKE_SOURCE_DIR}/src/Core/Dialogue/CosaveCodec.cpp
+	${CMAKE_SOURCE_DIR}/src/Core/Geometry/PanelGeometry.cpp
 )
 
 target_include_directories(Core.Tests PRIVATE ${CMAKE_SOURCE_DIR}/src)

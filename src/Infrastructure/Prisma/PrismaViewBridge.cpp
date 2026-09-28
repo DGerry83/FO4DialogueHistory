@@ -3,6 +3,9 @@
 #include <functional>
 #include <utility>
 
+#include "Application/Settings/ISettingsStore.h"
+#include "Core/Geometry/PanelGeometry.h"
+
 #include "REX/Log.hpp"
 
 // PrismaUI F4 bridge (runtime-resolved via RequestPluginAPI — never linked).
@@ -79,6 +82,18 @@ namespace F4DH::Infrastructure
 			});
 		}
 
+		void OnGeometryChanged(const char* a_json)
+		{
+			// Fires on PrismaUI's thread; parse + persist on the game thread
+			// (M5-G4: INI write at mouseup cadence, user-gesture bounded).
+			const std::string payload = a_json ? a_json : "";
+			Dispatch([payload] {
+				if (g_bridge) {
+					g_bridge->HandleGeometryReport(payload);
+				}
+			});
+		}
+
 		void OnConsoleMessage(PrismaView, PRISMA_UI_API::ConsoleMessageLevel a_level, const char* a_message)
 		{
 			switch (a_level) {
@@ -102,12 +117,18 @@ namespace F4DH::Infrastructure
 			g_api->RegisterConsoleCallback(a_view, &OnConsoleMessage);
 			g_api->RegisterJSListener(a_view, "requestHistory", &OnRequestHistory);
 			g_api->RegisterJSListener(a_view, "closeRequested", &OnCloseRequested);
+			g_api->RegisterJSListener(a_view, "geometryChanged", &OnGeometryChanged);
 			g_api->SetViewRole(a_view, PRISMA_UI_API::ViewRole::kPanel);
 			g_api->SetViewOwnsEscape(a_view, true);
 			// Deterministic snapshot replay: the view's requestHistory can fire
 			// before the listener is registered, so push the cache directly.
 			if (g_bridge && !g_snapshotCache.empty()) {
 				g_bridge->PushSnapshot(g_snapshotCache);
+			}
+			// Same first-open race for geometry: an empty snapshot cache skips
+			// the PushSnapshot path above, so apply it here too.
+			if (g_bridge) {
+				g_bridge->ApplyGeometry();
 			}
 			if (g_focusPending) {
 				g_focusPending = false;
@@ -244,6 +265,7 @@ namespace F4DH::Infrastructure
 		}
 		if (IsHealthy()) {
 			_api->InteropCall(_view, "setFontSize", std::to_string(_fontSize).c_str());
+			ApplyGeometry();
 			_api->InteropCall(_view, "setHistory", json.c_str());
 		}
 	}
@@ -271,6 +293,38 @@ namespace F4DH::Infrastructure
 	void PrismaViewBridge::SetFontSize(int fontSize) noexcept
 	{
 		_fontSize = fontSize;
+	}
+
+	void PrismaViewBridge::SetGeometry(const std::optional<Core::PanelGeometry>& geometry) noexcept
+	{
+		_geometry = geometry;
+	}
+
+	void PrismaViewBridge::SetSettingsSink(Application::ISettingsStore* store) noexcept
+	{
+		_settingsStore = store;
+	}
+
+	void PrismaViewBridge::HandleGeometryReport(const std::string& a_jsonPayload)
+	{
+		Core::PanelGeometry geometry;
+		if (!Core::ParsePanelGeometry(a_jsonPayload, geometry)) {
+			REX::LogWarning("PrismaViewBridge: ignoring malformed geometryChanged payload");
+			return;
+		}
+		_geometry = geometry;
+		if (_settingsStore) {
+			_settingsStore->SaveGeometry(geometry);
+		}
+		REX::LogInformation("PrismaViewBridge: panel geometry {}x{} at ({},{})",
+			geometry.width, geometry.height, geometry.x, geometry.y);
+	}
+
+	void PrismaViewBridge::ApplyGeometry()
+	{
+		if (_api && _view != 0 && _geometry && IsHealthy()) {
+			_api->InteropCall(_view, "setGeometry", Core::FormatPanelGeometry(*_geometry).c_str());
+		}
 	}
 
 	bool PrismaViewBridge::IsHealthy()
