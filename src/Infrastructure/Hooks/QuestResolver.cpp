@@ -16,6 +16,7 @@
 
 #include "REX/Log.hpp"
 
+#include <format>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -51,6 +52,19 @@ namespace
 	}
 
 	// Resolves one "<alias=name>" token against the quest's filled aliases.
+	// One bounded diagnostic line per quest+token pair (game thread only —
+	// the seen-set needs no lock). Exists to pin down which resolution step
+	// misses for radiant tokens in the field.
+	void LogAliasOnce(std::uint32_t a_questId, std::string_view a_token, const std::string& a_detail)
+	{
+		static std::unordered_set<std::string> seen;
+		const std::string key = std::format("{:08X}:{}", a_questId, a_token);
+		if (!seen.insert(key).second) {
+			return;
+		}
+		REX::LogInformation("alias resolve [{}]: {}", key, a_detail);
+	}
+
 	// OG-safe chain only: alias array under the read lock is inline member
 	// iteration; GetAliasedRef is OG-verified REL::ID 847223 (proven stable
 	// in-session); the ref's base object is a member read; names come from
@@ -64,6 +78,7 @@ namespace
 	{
 		std::uint32_t    aliasID = 0;
 		bool             isRefAlias = false;
+		const char*      aliasType = "other";
 		RE::BGSLocation* forcedLoc = nullptr;
 		bool             found = false;
 		{
@@ -77,39 +92,43 @@ namespace
 				aliasID = alias->aliasID;
 				if (alias->Is<RE::BGSRefAlias>()) {
 					isRefAlias = true;
+					aliasType = "Ref";
 				} else if (const auto* locAlias = alias->As<RE::BGSLocAlias>()) {
+					aliasType = "Loc";
 					forcedLoc = locAlias->forcedLocation;
 				}
 				break;
 			}
 		}
 		if (!found) {
+			LogAliasOnce(a_quest->formID, a_tokenName, "no alias with that name");
 			return std::nullopt;
 		}
 
+		// Ref alias: the aliased actor's name (proven path). A non-actor ref
+		// alias is NOT terminal — radiant quests often alias a location's
+		// marker ref, so fall through to the location probe below.
 		if (isRefAlias) {
 			RE::ObjectRefHandle handle;
 			handle = a_quest->GetAliasedRef(&handle, aliasID);
-			const auto ref = handle.get();
-			if (!ref) {
-				return std::nullopt;  // alias unfilled or ref unloaded
-			}
-			const auto base = ref->GetBaseObject();
-			if (base && base->Is(RE::FormType::kActor)) {
-				if (const char* name = static_cast<RE::TESNPC*>(base)->GetFullName(); name && name[0] != '\0') {
-					return std::string(name);
+			if (const auto ref = handle.get()) {
+				const auto base = ref->GetBaseObject();
+				if (base && base->Is(RE::FormType::kActor)) {
+					if (const char* name = static_cast<RE::TESNPC*>(base)->GetFullName(); name && name[0] != '\0') {
+						LogAliasOnce(a_quest->formID, a_tokenName, std::format("aliasID={} type=Ref -> actor '{}'", aliasID, name));
+						return std::string(name);
+					}
 				}
 			}
-			return std::nullopt;
 		}
 
-		// Location alias: forced fill first (M7), then the quest instance
-		// data for conditional fills (what radiant quests actually use).
+		// Location resolution: forced fill first (M7), then the quest
+		// instance data for conditional fills (what radiant quests use).
 		const RE::BGSLocation* loc = forcedLoc;
+		std::uint32_t        nameFormID = 0;
 		if (!loc) {
 			// Instance text maps aliasID -> the form providing the display
 			// name. All member reads — no engine calls.
-			std::uint32_t nameFormID = 0;
 			for (const auto* instance : a_quest->instanceDataArray) {
 				if (!instance) {
 					continue;
@@ -125,14 +144,18 @@ namespace
 				}
 			}
 			// aliasedLocMap holds the runtime-filled locations. Its key
-			// semantics are undocumented, so only validated hits are used:
-			// probe fullNameFormID (the hit's own formID must match), else
-			// accept the map's single entry when there is exactly one.
+			// semantics are undocumented, so every hit must be validated:
+			// probe either candidate key and require the hit's own formID to
+			// match the naming form; as a last resort accept the map's
+			// single entry when there is exactly one.
 			if (nameFormID != 0) {
-				const auto it = a_quest->aliasedLocMap.find(nameFormID);
-				if (it != a_quest->aliasedLocMap.end() && it->second &&
-					it->second->Is(RE::FormType::kLocation) && it->second->formID == nameFormID) {
-					loc = it->second;
+				for (const std::uint32_t key : { nameFormID, aliasID }) {
+					const auto it = a_quest->aliasedLocMap.find(key);
+					if (it != a_quest->aliasedLocMap.end() && it->second &&
+						it->second->Is(RE::FormType::kLocation) && it->second->formID == nameFormID) {
+						loc = it->second;
+						break;
+					}
 				}
 			}
 			if (!loc && a_quest->aliasedLocMap.size() == 1) {
@@ -145,9 +168,14 @@ namespace
 		}
 		if (loc) {
 			if (const char* name = loc->GetFullName(); name && name[0] != '\0') {
+				LogAliasOnce(a_quest->formID, a_tokenName, std::format("aliasID={} type={} nameFormID={:08X} -> loc '{}'", aliasID, aliasType, nameFormID, name));
 				return std::string(name);
 			}
 		}
+		LogAliasOnce(a_quest->formID, a_tokenName, std::format(
+			"aliasID={} type={} forced={} nameFormID={:08X} locMapSize={} instances={} -> MISS",
+			aliasID, aliasType, forcedLoc != nullptr, nameFormID,
+			a_quest->aliasedLocMap.size(), a_quest->instanceDataArray.size()));
 		return std::nullopt;
 	}
 }
