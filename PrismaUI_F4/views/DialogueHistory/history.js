@@ -95,13 +95,9 @@ function dhSend(eventName) {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
-  // C18 diagnostic: proves the console mirror and the listener bindings.
-  console.log("[DialogueHistory] DOMContentLoaded; requestHistory=" + typeof window.requestHistory +
-              " closeRequested=" + typeof window.closeRequested);
   dhSend("requestHistory");
   document.addEventListener("keydown", (event) => {
-    // C18 diagnostic trace (demote after the Escape verdict).
-    console.log("[DialogueHistory] keydown key=" + event.key + " keyCode=" + event.keyCode);
+    // Ultralight reports Escape as "Unidentified" — match by keyCode.
     if (event.key === "Escape" || event.keyCode === 27) {
       dhSend("closeRequested");
     }
