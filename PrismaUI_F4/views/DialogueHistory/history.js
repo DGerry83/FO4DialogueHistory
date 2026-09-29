@@ -40,7 +40,11 @@
  * a drag is active, dhDragActive gates both the scroll handler and the
  * width check — all re-windowing is deferred to one settle pass on mouseup
  * (the per-mousemove invalidation cascade made resize lag at any model
- * size). */
+ * size). C19: at drag start the panes themselves are frozen — pinned to
+ * their rendered px size, parents clipping the slack — because even one
+ * engine-natural re-wrap of visible text per mousemove built a multi-
+ * second event backlog; the mouseup settle re-anchors against true
+ * geometry. */
 "use strict";
 
 function dhParse(value, fallback) {
@@ -309,6 +313,7 @@ let dhBottomSpacer = null;
 let dhLogWidth = -1;            // last seen #log clientWidth (-1 = unknown)
 let dhScrollSilencing = false;  // reentrancy guard for silent scrollTop fixes
 let dhDragActive = false;       // C18: a panel or split drag is in progress
+let dhPaneFreeze = null;        // C19: saved pane inline styles while frozen (null = not frozen)
 
 /* C17 — the selection predicate, verbatim from the pre-virtualization
  * dhRenderLog/appendLine: "All" applies the C7 bucket checkboxes; a
@@ -686,6 +691,86 @@ function dhPanelRect() {
   return { x: panel.offsetLeft, y: panel.offsetTop, width: panel.offsetWidth, height: panel.offsetHeight };
 }
 
+/* C19 — freeze pane geometry during drags. Ultralight re-layouts every
+ * visible wrapping text line whenever a pane's width changes — mandatory
+ * engine work, not gateable JS — and even that one natural reflow per
+ * mousemove piled up a multi-second event backlog (INVESTIGATION_LOG.md,
+ * C19 addendum). So at drag start each requested pane is pinned to its
+ * exact rendered size (one clientWidth/clientHeight read per pane, at
+ * freeze time only) and the parent's overflow clips the slack: the text
+ * stays visible and perfectly static while the panel chrome resizes, and
+ * the one settle pass on mouseup re-anchors against true geometry. User
+ * ruling: NO hiding of any kind — the panes stay rendered at every moment.
+ * Idempotent: the saved-state record doubles as the frozen flag, so a
+ * second freeze is a no-op. */
+function dhFreezePanes(pinLog, pinIndex) {
+  if (dhPaneFreeze) {
+    return;  // already frozen — never clobber the saved values
+  }
+  const jobs = [];
+  if (pinLog) {
+    jobs.push([document.getElementById("log"), document.getElementById("dialogue")]);
+  }
+  if (pinIndex) {
+    jobs.push([document.getElementById("index"), document.getElementById("body")]);
+  }
+  const saved = [];
+  for (const job of jobs) {
+    const pane = job[0];
+    const parent = job[1];
+    if (!pane) {
+      continue;
+    }
+    saved.push({
+      pane: pane,
+      parent: parent,
+      width: pane.style.width,
+      height: pane.style.height,
+      flex: pane.style.flex,
+      boxSizing: pane.style.boxSizing,
+      overflow: parent ? parent.style.overflow : ""
+    });
+    /* Read the rendered size BEFORE touching anything, then pin under
+     * border-box so the pinned width/height equal the pre-freeze
+     * clientWidth/clientHeight exactly — history.css sets no box-sizing,
+     * so under the content-box default a clientWidth-sized write would
+     * grow the pane by its padding (#log carries 8px/10px). */
+    const pinW = pane.clientWidth + "px";
+    const pinH = pane.clientHeight + "px";
+    pane.style.boxSizing = "border-box";
+    pane.style.width = pinW;
+    pane.style.height = pinH;
+    pane.style.flex = "none";
+    if (parent) {
+      parent.style.overflow = "hidden";
+    }
+  }
+  if (saved.length > 0) {
+    dhPaneFreeze = saved;
+  }
+}
+
+/* C19 — restore every inline value dhFreezePanes saved, verbatim (an empty
+ * string hands the property back to the CSS defaults), and drop the record.
+ * Runs FIRST in every drag onUp — before the flag clears and before the C18
+ * settle — so the settle measures true post-drag geometry. Calling it with
+ * nothing frozen (every move drag) is a deliberate no-op. */
+function dhUnfreezePanes() {
+  if (!dhPaneFreeze) {
+    return;
+  }
+  for (const rec of dhPaneFreeze) {
+    rec.pane.style.width = rec.width;
+    rec.pane.style.height = rec.height;
+    rec.pane.style.flex = rec.flex;
+    rec.pane.style.boxSizing = rec.boxSizing;
+    if (rec.parent) {
+      rec.parent.style.overflow = rec.overflow;
+    }
+  }
+  dhPaneFreeze = null;
+}
+
 /* Header drag-move / grip drag-resize. PrismaUI delivers the full mouse
  * stream to the focused view and holds native capture during drags, so
  * document-level mousemove/mouseup keep firing outside the panel. The final
@@ -696,6 +781,9 @@ function dhStartDrag(mode) {
       return;
     }
     dhDragActive = true;  // C18: gate the width check + window passes
+    if (mode === "resize") {
+      dhFreezePanes(true, true);  // C19: freeze both panes (move: nothing to pin)
+    }
     const start = dhPanelRect();
     const origin = { x: event.clientX, y: event.clientY };
     dhApplyGeometry(start);  // absolute at the current resolved spot, no jump
@@ -713,6 +801,7 @@ function dhStartDrag(mode) {
     function onUp() {
       document.removeEventListener("mousemove", onMove);
       document.removeEventListener("mouseup", onUp);
+      dhUnfreezePanes();  // C19: restore the frozen panes FIRST (move: no-op)
       dhDragActive = false;
       if (mode === "resize") {
         // C18 settle: re-check the width (invalidates iff it changed) and
@@ -751,6 +840,7 @@ function dhStartSplitDrag(event) {
     return;
   }
   dhDragActive = true;  // C18: gate the width check + window passes
+  dhFreezePanes(true, false);  // C19: freeze the log; the index is the pane being sized
   const startWidth = index.offsetWidth;
   const originX = event.clientX;
   index.style.maxWidth = "none";  // explicit px width takes over from CSS
@@ -765,6 +855,7 @@ function dhStartSplitDrag(event) {
   function onUp() {
     document.removeEventListener("mousemove", onMove);
     document.removeEventListener("mouseup", onUp);
+    dhUnfreezePanes();  // C19: restore the frozen log FIRST
     dhDragActive = false;
     dhCheckLogWidth();  // C17: the split drag moved the log's width edge
     dhUpdateWindow();   // C18 settle, same as the grip resize
