@@ -36,7 +36,11 @@
  * stays ~200 rows at any model size and panel resize reflows only those.
  * Unmounted blocks cost a running-average height estimate; scrolling,
  * panel resize / split drag, and font-size changes re-window or re-estimate
- * via dhUpdateWindow / dhInvalidateHeights (C17 section below). */
+ * via dhUpdateWindow / dhInvalidateHeights (C17 section below). C18: while
+ * a drag is active, dhDragActive gates both the scroll handler and the
+ * width check — all re-windowing is deferred to one settle pass on mouseup
+ * (the per-mousemove invalidation cascade made resize lag at any model
+ * size). */
 "use strict";
 
 function dhParse(value, fallback) {
@@ -298,11 +302,13 @@ let dhViewLines = [];
 let dhBlockHeights = [];
 let dhBlockSum = 0;
 let dhBlockMeasured = 0;
+let dhEstSeed = 0;              // C18: last layout average, kept across invalidation
 const dhMounted = new Map();
 let dhTopSpacer = null;
 let dhBottomSpacer = null;
 let dhLogWidth = -1;            // last seen #log clientWidth (-1 = unknown)
 let dhScrollSilencing = false;  // reentrancy guard for silent scrollTop fixes
+let dhDragActive = false;       // C18: a panel or split drag is in progress
 
 /* C17 — the selection predicate, verbatim from the pre-virtualization
  * dhRenderLog/appendLine: "All" applies the C7 bucket checkboxes; a
@@ -332,6 +338,7 @@ function dhRebuildView() {
   }
   dhBlockSum = 0;
   dhBlockMeasured = 0;
+  dhEstSeed = 0;  // C18: the content changed — the saved average is meaningless
 }
 
 /* C17 — current block geometry: measured heights where known, the
@@ -340,7 +347,14 @@ function dhRebuildView() {
  * total, i.e. the virtual content height the spacers simulate. */
 function dhBlockLayout() {
   const n = dhBlockHeights.length;
-  const est = dhBlockMeasured > 0 ? dhBlockSum / dhBlockMeasured : kBlockRows * kInitialRowEst;
+  // C18 estimate fallback chain: fresh measured average -> the average saved
+  // across invalidation (dhEstSeed) -> the crude initial per-row guess.
+  let est = kBlockRows * kInitialRowEst;
+  if (dhBlockMeasured > 0) {
+    est = dhBlockSum / dhBlockMeasured;
+  } else if (dhEstSeed > 0) {
+    est = dhEstSeed;
+  }
   const heights = new Array(n);
   for (let b = 0; b < n; b++) {
     heights[b] = dhBlockHeights[b] || est;
@@ -525,15 +539,28 @@ function dhUpdateWindow() {
   }
 }
 
+/* C18 — scroll-event gate: the engine fires #log scroll events during a
+ * drag too (clientHeight changes as the panel resizes), and each one
+ * would otherwise run a full window pass mid-drag. Forward only when no
+ * drag is active; the mouseup settle re-windows once. */
+function dhOnScroll() {
+  if (!dhDragActive) {
+    dhUpdateWindow();
+  }
+}
+
 /* C17 — width or font size changed, so every measured height is stale.
  * Re-anchor on the block visible at the top edge: remember it, drop the
- * per-block heights (the running average survives as the re-estimate
- * seed — re-anchoring on the raw initial guess would teleport deep
- * scroll positions by anchorBlocks x (avgReal - fallback)), re-window
- * (which re-measures the mounted blocks and silently corrects), then
- * re-anchor once more against the refreshed estimates so the same line
- * really sits at the top. Touching only mounted blocks is what keeps
- * panel drag-resize cheap. */
+ * per-block heights (the current average is stashed in dhEstSeed first —
+ * re-anchoring on the raw initial guess would teleport deep scroll
+ * positions by anchorBlocks x (avgReal - fallback)), re-window (which
+ * re-measures the mounted blocks and silently corrects), then re-anchor
+ * once more against the refreshed estimates so the same line really sits
+ * at the top. C18: the sum/count reset with the heights so re-measurement
+ * starts a fresh average (the old survival of the running sum
+ * double-counted), and this runs ONCE per drag at mouseup — the old
+ * per-mousemove invalidation forced a ~6-10-reflow layout cascade every
+ * frame and made panel resize lag at any model size. */
 function dhInvalidateHeights() {
   const log = document.getElementById("log");
   if (!log || dhBlockHeights.length === 0) {
@@ -546,9 +573,12 @@ function dhInvalidateHeights() {
       && before.offsets[anchor] + before.heights[anchor] <= entryScroll) {
     anchor++;
   }
+  dhEstSeed = before.est;
   for (let b = 0; b < dhBlockHeights.length; b++) {
     dhBlockHeights[b] = 0;
   }
+  dhBlockSum = 0;
+  dhBlockMeasured = 0;
   dhSetScrollSilently(log, anchor * before.est);
   dhUpdateWindow();
   const now = dhBlockLayout();
@@ -559,11 +589,11 @@ function dhInvalidateHeights() {
   }
 }
 
-/* C17 — width-driven invalidation hook: dhApplyGeometry runs per
- * mousemove during panel drag-resize and on setGeometry; the M8 split
- * drag calls here on mouseup. Only an actual #log clientWidth change
- * re-anchors (a pure move drag reports the same width), and the first
- * sighting just seeds the baseline. */
+/* C17 — width-driven invalidation hook: dhApplyGeometry calls here on
+ * setGeometry (C18: it skips the read while a drag is active — the drags
+ * re-check once on mouseup instead), and the M8 split drag calls here on
+ * mouseup. Only an actual #log clientWidth change re-anchors, and the
+ * first sighting just seeds the baseline. */
 function dhCheckLogWidth() {
   const log = document.getElementById("log");
   if (!log) {
@@ -626,7 +656,12 @@ function dhApplyGeometry(geo) {
   panel.style.width = geo.width + "px";
   panel.style.height = geo.height + "px";
   dhRevealPanel();
-  dhCheckLogWidth();  // C17: a resize drag changes the log width
+  if (!dhDragActive) {
+    // C18: while a drag is active the width is re-checked once on mouseup
+    // (the drags' onUp) — a clientWidth read here ran per mousemove and
+    // forced a reflow every frame.
+    dhCheckLogWidth();
+  }
 }
 
 /* Plugin -> JS: apply persisted geometry on open. Absent/invalid payloads
@@ -660,6 +695,7 @@ function dhStartDrag(mode) {
     if (event.button !== 0) {
       return;
     }
+    dhDragActive = true;  // C18: gate the width check + window passes
     const start = dhPanelRect();
     const origin = { x: event.clientX, y: event.clientY };
     dhApplyGeometry(start);  // absolute at the current resolved spot, no jump
@@ -677,6 +713,14 @@ function dhStartDrag(mode) {
     function onUp() {
       document.removeEventListener("mousemove", onMove);
       document.removeEventListener("mouseup", onUp);
+      dhDragActive = false;
+      if (mode === "resize") {
+        // C18 settle: re-check the width (invalidates iff it changed) and
+        // re-window once — the unconditional pass also covers clientHeight-
+        // only resizes.
+        dhCheckLogWidth();
+        dhUpdateWindow();
+      }
       const rect = dhPanelRect();
       const payload = JSON.stringify({ x: rect.x, y: rect.y, width: rect.width, height: rect.height });
       const fn = window.geometryChanged;
@@ -706,6 +750,7 @@ function dhStartSplitDrag(event) {
   if (!index || !body) {
     return;
   }
+  dhDragActive = true;  // C18: gate the width check + window passes
   const startWidth = index.offsetWidth;
   const originX = event.clientX;
   index.style.maxWidth = "none";  // explicit px width takes over from CSS
@@ -720,7 +765,9 @@ function dhStartSplitDrag(event) {
   function onUp() {
     document.removeEventListener("mousemove", onMove);
     document.removeEventListener("mouseup", onUp);
+    dhDragActive = false;
     dhCheckLogWidth();  // C17: the split drag moved the log's width edge
+    dhUpdateWindow();   // C18 settle, same as the grip resize
   }
   document.addEventListener("mousemove", onMove);
   document.addEventListener("mouseup", onUp);
@@ -1059,7 +1106,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }
   const log = document.getElementById("log");
   if (log) {
-    log.addEventListener("scroll", dhUpdateWindow);  // C17 windowing
+    log.addEventListener("scroll", dhOnScroll);  // C17 windowing, C18 drag-gated
   }
   const clearBtn = document.getElementById("clear");
   if (clearBtn) {
