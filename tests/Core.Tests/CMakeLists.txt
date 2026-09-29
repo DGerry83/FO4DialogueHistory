@@ -23,10 +23,12 @@ add_executable(Core.Tests
 	PanelGeometryTests.cpp
 	AliasTokensTests.cpp
 	StressTestDataGeneratorTests.cpp
+	ScanCodeMapTests.cpp
 	${CMAKE_SOURCE_DIR}/src/Core/Dialogue/PayloadBuilder.cpp
 	${CMAKE_SOURCE_DIR}/src/Core/Dialogue/CosaveCodec.cpp
 	${CMAKE_SOURCE_DIR}/src/Core/Dialogue/StressTestDataGenerator.cpp
 	${CMAKE_SOURCE_DIR}/src/Core/Geometry/PanelGeometry.cpp
+	${CMAKE_SOURCE_DIR}/src/Core/Input/ScanCodeMap.cpp
 )
 
 target_include_directories(Core.Tests PRIVATE ${CMAKE_SOURCE_DIR}/src)

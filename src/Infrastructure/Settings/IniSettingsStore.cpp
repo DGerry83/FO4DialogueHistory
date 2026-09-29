@@ -1,5 +1,7 @@
 #include "IniSettingsStore.h"
 
+#include "Core/Input/ScanCodeMap.h"
+
 #include <algorithm>
 #include <charconv>
 #include <cctype>
@@ -210,11 +212,10 @@ namespace F4DH::Infrastructure
 						settings.verboseCapture = parsed == 1;
 					}
 				} else if (key == "stresstestkey") {
-					std::uint32_t parsed = 0;
-					if (!ParseUint(value, parsed)) {
-						REX::LogWarning("IniSettingsStore: invalid StressTestKey '{}' — keeping default 0 (disabled)", value);
+					if (const auto code = Core::ParseScanCode(value)) {
+						settings.stressTestKey = *code;  // 0 = disabled (numeric 0 or off/none/disabled)
 					} else {
-						settings.stressTestKey = parsed;  // any uint is a valid DIK code; 0 = disabled
+						REX::LogWarning("IniSettingsStore: invalid StressTestKey '{}' — keeping default 0 (disabled)", value);
 					}
 				} else if (key == "stresstestlines") {
 					std::uint32_t parsed = 0;
@@ -248,10 +249,14 @@ namespace F4DH::Infrastructure
 			const bool    ok = ParseUint(value, parsed);
 
 			if (key == "hotkey") {
-				if (!ok) {
-					REX::LogWarning("IniSettingsStore: invalid Hotkey '{}' — keeping default 35", value);
+				if (const auto code = Core::ParseScanCode(value)) {
+					if (*code == 0) {
+						REX::LogWarning("IniSettingsStore: Hotkey '{}' would disable the panel toggle — keeping default 35 (H)", value);
+					} else {
+						settings.hotkeyScanCode = *code;
+					}
 				} else {
-					settings.hotkeyScanCode = parsed;
+					REX::LogWarning("IniSettingsStore: invalid Hotkey '{}' — keeping default 35 (H)", value);
 				}
 			} else if (key == "buffersize") {
 				if (!ok) {

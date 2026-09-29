@@ -37,6 +37,7 @@ add_library(${PROJECT_NAME} SHARED
 	src/Core/Dialogue/CosaveCodec.cpp
 	src/Core/Dialogue/StressTestDataGenerator.cpp
 	src/Core/Geometry/PanelGeometry.cpp
+	src/Core/Input/ScanCodeMap.cpp
 	src/Application/Capture/CapturePipeline.cpp
 	src/Application/View/ViewController.cpp
 	src/Application/Input/HotkeyController.cpp
