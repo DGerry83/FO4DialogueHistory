@@ -18,6 +18,7 @@ namespace F4DH::Application
 		std::size_t   bufferSize = 0;       // 0 = unlimited (no eviction); >0 caps, range 10–500
 		int           fontSize = 16;        // range 10–32 (px)
 		bool          verboseCapture = false;  // [Diagnostics] VerboseCapture: log every subtitle event at Information level
+		bool          keyProbe = false;        // [Diagnostics] KeyProbe: log every keyboard press code the engine delivers (bind diagnostics)
 		std::uint32_t stressTestKey = 0;       // [Diagnostics] StressTestKey: DIK scan code (INI accepts key names + "off") injecting one synthetic batch; 0 = disabled
 		std::uint32_t stressTestLines = 500;   // [Diagnostics] StressTestLines: lines per injected batch (clamped 1-5000)
 		std::uint32_t stressTestQuests = 20;   // [Diagnostics] StressTestQuests: synthetic quests per batch (clamped 1-100)

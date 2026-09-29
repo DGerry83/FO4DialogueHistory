@@ -136,13 +136,14 @@ namespace F4DH
 		{
 		public:
 			InputSink(Application::HotkeyController& hotkey, Core::ILogger& log, MatchPair a_match, std::uint32_t a_configuredScanCode,
-				MatchPair a_stressMatch = { 0, 0 }, std::uint32_t a_stressScanCode = 0) :
+				MatchPair a_stressMatch = { 0, 0 }, std::uint32_t a_stressScanCode = 0, bool a_probe = false) :
 				_hotkey(hotkey),
 				_log(log),
 				_match(a_match),
 				_configuredScanCode(a_configuredScanCode),
 				_stressMatch(a_stressMatch),
-				_stressScanCode(a_stressScanCode)
+				_stressScanCode(a_stressScanCode),
+				_probe(a_probe)
 			{}
 
 			// The dispatcher consults this before delivering; the base
@@ -179,10 +180,24 @@ namespace F4DH
 				// cluster's second NumLock state. The stress-test pair follows
 				// the same rule; a 0 stress match code disables the branch
 				// entirely.
-				if (code == _match.primary || (_match.secondary != 0 && code == _match.secondary)) {
+				const bool hotkeyHit  = code == _match.primary || (_match.secondary != 0 && code == _match.secondary);
+				const bool stressHit  = !hotkeyHit && _stressMatch.primary != 0 &&
+					(code == _stressMatch.primary || (_stressMatch.secondary != 0 && code == _stressMatch.secondary));
+
+				// [Diagnostics] KeyProbe: dump every delivered keyboard press so
+				// bind problems can be mapped empirically in ONE game session.
+				// If a physical key produces no line here, the engine never
+				// delivered it to MenuControls handlers — no bind can catch it.
+				if (_probe) {
+					_log.Info(std::format("input probe: key press code {} (0x{:X}){}",
+						code, code,
+						hotkeyHit ? " [panel hotkey]" : (stressHit ? " [stress-test key]" : "")));
+				}
+
+				if (hotkeyHit) {
 					_log.Info(std::format("input: hotkey matched (code {}), toggling panel", code));
 					_hotkey.OnKeyDown(_configuredScanCode);
-				} else if (_stressMatch.primary != 0 && (code == _stressMatch.primary || (_stressMatch.secondary != 0 && code == _stressMatch.secondary))) {
+				} else if (stressHit) {
 					_log.Info(std::format("input: stress-test key matched (code {}), injecting batch", code));
 					_hotkey.OnKeyDown(_stressScanCode);
 				}
@@ -195,6 +210,7 @@ namespace F4DH
 			std::uint32_t                  _configuredScanCode;  // always DIK (INI value)
 			MatchPair                      _stressMatch;         // DIK on NG/AE, VK on OG; primary 0 = disabled
 			std::uint32_t                  _stressScanCode;      // always DIK (INI value)
+			bool                           _probe{ false };      // [Diagnostics] KeyProbe
 			bool                           _loggedFirstEvent{ false };
 		};
 	}
@@ -217,11 +233,12 @@ namespace F4DH
 		static Infrastructure::IniSettingsStore settingsStore;
 		root.settings = settingsStore.Load();
 		root.log.Info(std::format(
-			"settings: hotkey={} bufferSize={} fontSize={} verboseCapture={}",
+			"settings: hotkey={} bufferSize={} fontSize={} verboseCapture={} keyProbe={}",
 			root.settings.hotkeyScanCode,
 			root.settings.bufferSize,
 			root.settings.fontSize,
-			root.settings.verboseCapture));
+			root.settings.verboseCapture,
+			root.settings.keyProbe));
 
 		static Core::DialogueBuffer                buffer{ root.settings.bufferSize };
 		static Infrastructure::PrismaViewBridge    bridge;
@@ -241,7 +258,7 @@ namespace F4DH
 		}
 		const auto                                 matchCode = ResolveHotkeyMatchCode(root.settings.hotkeyScanCode, root.log);
 		const auto                                 stressMatchCode = stressScanCode != 0 ? ResolveHotkeyMatchCode(stressScanCode, root.log) : MatchPair{ 0, 0 };
-		static InputSink                           inputSink(hotkey, root.log, matchCode, root.settings.hotkeyScanCode, stressMatchCode, stressScanCode);
+		static InputSink                           inputSink(hotkey, root.log, matchCode, root.settings.hotkeyScanCode, stressMatchCode, stressScanCode, root.settings.keyProbe);
 
 		bridge.SetFontSize(root.settings.fontSize);
 		bridge.SetGeometry(root.settings.panelGeometry);

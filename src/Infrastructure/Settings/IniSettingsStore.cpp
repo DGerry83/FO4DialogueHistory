@@ -211,6 +211,16 @@ namespace F4DH::Infrastructure
 					} else {
 						settings.verboseCapture = parsed == 1;
 					}
+				} else if (key == "keyprobe") {
+					std::uint32_t parsed = 0;
+					if (!ParseUint(value, parsed)) {
+						REX::LogWarning("IniSettingsStore: invalid KeyProbe '{}' — keeping default 0 (off)", value);
+					} else if (parsed > 1) {
+						settings.keyProbe = true;
+						REX::LogWarning("IniSettingsStore: KeyProbe {} out of range 0-1 — clamped to 1", parsed);
+					} else {
+						settings.keyProbe = parsed == 1;
+					}
 				} else if (key == "stresstestkey") {
 					if (const auto code = Core::ParseScanCode(value)) {
 						settings.stressTestKey = *code;  // 0 = disabled (numeric 0 or off/none/disabled)
