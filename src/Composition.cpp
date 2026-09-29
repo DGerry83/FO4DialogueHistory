@@ -71,27 +71,62 @@ namespace F4DH
 			}
 		}
 
+		// Numpad digit/decimal scan codes are NumLock-sensitive: Windows reports
+		// VK_NUMPADx with NumLock on and the navigation key that shares the scan
+		// code (Insert/End/Down/...) with it off. MapVirtualKeyW only ever
+		// returns the navigation VK for these (0x52 -> VK_INSERT), so both
+		// equivalents must be matched. Pair: { NumLock-on VK, NumLock-off VK }.
+		[[nodiscard]] constexpr std::pair<std::uint32_t, std::uint32_t> NumpadVkPair(std::uint32_t a_scanCode)
+		{
+			switch (a_scanCode) {
+			case 0x52: return { 0x60, 0x2D };  // DIK_NUMPAD0  -> VK_NUMPAD0 / VK_INSERT
+			case 0x4F: return { 0x61, 0x23 };  // DIK_NUMPAD1  -> VK_NUMPAD1 / VK_END
+			case 0x50: return { 0x62, 0x28 };  // DIK_NUMPAD2  -> VK_NUMPAD2 / VK_DOWN
+			case 0x51: return { 0x63, 0x22 };  // DIK_NUMPAD3  -> VK_NUMPAD3 / VK_NEXT
+			case 0x4B: return { 0x64, 0x25 };  // DIK_NUMPAD4  -> VK_NUMPAD4 / VK_LEFT
+			case 0x4C: return { 0x65, 0x0C };  // DIK_NUMPAD5  -> VK_NUMPAD5 / VK_CLEAR
+			case 0x4D: return { 0x66, 0x27 };  // DIK_NUMPAD6  -> VK_NUMPAD6 / VK_RIGHT
+			case 0x47: return { 0x67, 0x24 };  // DIK_NUMPAD7  -> VK_NUMPAD7 / VK_HOME
+			case 0x48: return { 0x68, 0x26 };  // DIK_NUMPAD8  -> VK_NUMPAD8 / VK_UP
+			case 0x49: return { 0x69, 0x21 };  // DIK_NUMPAD9  -> VK_NUMPAD9 / VK_PRIOR
+			case 0x53: return { 0x6E, 0x2E };  // DIK_DECIMAL  -> VK_DECIMAL / VK_DELETE
+			default:   return { 0, 0 };
+			}
+		}
+
+		// Two engine codes that should trigger one binding (0 = no secondary).
+		struct MatchPair
+		{
+			std::uint32_t primary;
+			std::uint32_t secondary;
+		};
+
 		// C11: OG 1.10.163 delivers Windows virtual-key codes in
 		// ButtonEvent.keyMask (empirically confirmed by the C10 diagnostic
 		// dumps — H arrived as 72/0x48); NG/AE deliver DirectInput scan codes.
 		// Translate the configured DIK scan code to its VK equivalent once, on
 		// OG only. The INI setting stays documented as a DirectInput scan code.
-		[[nodiscard]] std::uint32_t ResolveHotkeyMatchCode(std::uint32_t a_scanCode, Core::ILogger& a_log)
+		[[nodiscard]] MatchPair ResolveHotkeyMatchCode(std::uint32_t a_scanCode, Core::ILogger& a_log)
 		{
 			if (F4SE::GetRuntimeType() != F4SE::RuntimeType::kOG) {
 				a_log.Info(std::format("hotkey: DIK {} kept as raw scan code (NG/AE runtime)", a_scanCode));
-				return a_scanCode;
+				return { a_scanCode, 0 };
+			}
+
+			if (const auto numpad = NumpadVkPair(a_scanCode); numpad.first != 0) {
+				a_log.Info(std::format("hotkey: DIK {} -> VK {} / VK {} (numpad key, both NumLock states matched)", a_scanCode, numpad.first, numpad.second));
+				return { numpad.first, numpad.second };
 			}
 
 			const auto mappedInput = static_cast<UINT>(IsExtendedDik(a_scanCode) ? (a_scanCode | 0xE000u) : a_scanCode);
 			const auto vk = static_cast<std::uint32_t>(::MapVirtualKeyW(mappedInput, MAPVK_VSC_TO_VK));
 			if (vk == 0) {
 				a_log.Warn(std::format("hotkey: DIK {} has no VK mapping; comparing raw scan code", a_scanCode));
-				return a_scanCode;
+				return { a_scanCode, 0 };
 			}
 
 			a_log.Info(std::format("hotkey: DIK {} -> VK {} (OG runtime)", a_scanCode, vk));
-			return vk;
+			return { vk, 0 };
 		}
 
 		// Edge-triggered keyboard router for the panel hotkey. Appended to
@@ -100,13 +135,13 @@ namespace F4DH
 		class InputSink final : public RE::BSInputEventUser
 		{
 		public:
-			InputSink(Application::HotkeyController& hotkey, Core::ILogger& log, std::uint32_t a_matchCode, std::uint32_t a_configuredScanCode,
-				std::uint32_t a_stressMatchCode = 0, std::uint32_t a_stressScanCode = 0) :
+			InputSink(Application::HotkeyController& hotkey, Core::ILogger& log, MatchPair a_match, std::uint32_t a_configuredScanCode,
+				MatchPair a_stressMatch = { 0, 0 }, std::uint32_t a_stressScanCode = 0) :
 				_hotkey(hotkey),
 				_log(log),
-				_matchCode(a_matchCode),
+				_match(a_match),
 				_configuredScanCode(a_configuredScanCode),
-				_stressMatchCode(a_stressMatchCode),
+				_stressMatch(a_stressMatch),
 				_stressScanCode(a_stressScanCode)
 			{}
 
@@ -138,14 +173,16 @@ namespace F4DH
 					return;
 				}
 				// C11: on OG the engine code is a VK (translated at init into
-				// _matchCode); on NG/AE it is the raw DIK scan code. Only the
+				// _match); on NG/AE it is the raw DIK scan code. Only the
 				// configured DIK code is ever handed down, so the Application
-				// layer never sees VK values. The stress-test pair follows the
-				// same rule; a 0 stress match code disables the branch entirely.
-				if (code == _matchCode) {
+				// layer never sees VK values. The secondary covers the numpad
+				// cluster's second NumLock state. The stress-test pair follows
+				// the same rule; a 0 stress match code disables the branch
+				// entirely.
+				if (code == _match.primary || (_match.secondary != 0 && code == _match.secondary)) {
 					_log.Info(std::format("input: hotkey matched (code {}), toggling panel", code));
 					_hotkey.OnKeyDown(_configuredScanCode);
-				} else if (_stressMatchCode != 0 && code == _stressMatchCode) {
+				} else if (_stressMatch.primary != 0 && (code == _stressMatch.primary || (_stressMatch.secondary != 0 && code == _stressMatch.secondary))) {
 					_log.Info(std::format("input: stress-test key matched (code {}), injecting batch", code));
 					_hotkey.OnKeyDown(_stressScanCode);
 				}
@@ -154,9 +191,9 @@ namespace F4DH
 		private:
 			Application::HotkeyController& _hotkey;
 			Core::ILogger&                 _log;
-			std::uint32_t                  _matchCode;           // DIK on NG/AE, VK on OG
+			MatchPair                      _match;               // DIK on NG/AE, VK on OG; secondary = numpad NumLock twin
 			std::uint32_t                  _configuredScanCode;  // always DIK (INI value)
-			std::uint32_t                  _stressMatchCode;     // DIK on NG/AE, VK on OG; 0 = disabled
+			MatchPair                      _stressMatch;         // DIK on NG/AE, VK on OG; primary 0 = disabled
 			std::uint32_t                  _stressScanCode;      // always DIK (INI value)
 			bool                           _loggedFirstEvent{ false };
 		};
@@ -203,7 +240,7 @@ namespace F4DH
 			stressScanCode = 0;
 		}
 		const auto                                 matchCode = ResolveHotkeyMatchCode(root.settings.hotkeyScanCode, root.log);
-		const auto                                 stressMatchCode = stressScanCode != 0 ? ResolveHotkeyMatchCode(stressScanCode, root.log) : 0;
+		const auto                                 stressMatchCode = stressScanCode != 0 ? ResolveHotkeyMatchCode(stressScanCode, root.log) : MatchPair{ 0, 0 };
 		static InputSink                           inputSink(hotkey, root.log, matchCode, root.settings.hotkeyScanCode, stressMatchCode, stressScanCode);
 
 		bridge.SetFontSize(root.settings.fontSize);
