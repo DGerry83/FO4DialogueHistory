@@ -229,6 +229,12 @@ html, body {
   line-height: 1.4;
 }
 
+/* C17 — block-windowed log (virtualization): #log's children are a top
+ * spacer div, the mounted .vblock wrappers (plain divs — the .line rows
+ * inside keep their existing styling), and a bottom spacer div. The
+ * spacers carry only an inline height and the blocks only wrap rows, so
+ * normal block flow handles both — no rules are required here. */
+
 /* Pip-Boy scrollbar: thin thumb on a transparent track (§6.3). */
 #log::-webkit-scrollbar {
   width: 8px;

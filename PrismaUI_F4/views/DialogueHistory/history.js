@@ -29,7 +29,14 @@
  * application (kills the first-open flash at the default layout while the
  * plugin's setGeometry InteropCall is still in flight); hover tooltips are
  * rendered in-page from title attributes (native title never renders under
- * Ultralight); the clear-confirm message names its scope. */
+ * Ultralight); the clear-confirm message names its scope.
+ * C17: the log is block-windowed (virtualized). dhViewLines is the filtered
+ * view; only the blocks intersecting the viewport (+1 block of overscan)
+ * are mounted as .vblock divs between two spacer divs, so the mounted DOM
+ * stays ~200 rows at any model size and panel resize reflows only those.
+ * Unmounted blocks cost a running-average height estimate; scrolling,
+ * panel resize / split drag, and font-size changes re-window or re-estimate
+ * via dhUpdateWindow / dhInvalidateHeights (C17 section below). */
 "use strict";
 
 function dhParse(value, fallback) {
@@ -267,6 +274,312 @@ function dhMakeRow(line) {
   return row;
 }
 
+/* C17 — block-windowed log rendering (view virtualization). The full
+ * filtered view lives in dhViewLines, but the DOM only ever holds the
+ * blocks intersecting the viewport plus one block of overscan on each
+ * side, so render work and resize reflow stay O(screenful) no matter how
+ * large the history grows. Blocks are fixed-count (kBlockRows) because
+ * rows wrap to variable heights; unmounted blocks cost the running
+ * average of measured block heights so the scrollbar geometry stays
+ * truthful, and a block measured above the viewport silently adjusts
+ * scrollTop by the estimate->measured delta so the visible content
+ * never jumps. */
+const kBlockRows = 50;
+const kOverscanBlocks = 1;
+const kInitialRowEst = 23;  // px/row guess: 16px font x 1.4 line-height (+pad)
+
+/* C17 — windowing state. dhViewLines mirrors dhAllLines through the
+ * current selection/bucket predicate; dhBlockHeights is parallel to the
+ * block count (0 = not measured in this view); dhMounted maps block
+ * index -> element. The spacers are reused empty divs whose heights are
+ * the summed heights of the unmounted blocks on each side of the
+ * mounted window. */
+let dhViewLines = [];
+let dhBlockHeights = [];
+let dhBlockSum = 0;
+let dhBlockMeasured = 0;
+const dhMounted = new Map();
+let dhTopSpacer = null;
+let dhBottomSpacer = null;
+let dhLogWidth = -1;            // last seen #log clientWidth (-1 = unknown)
+let dhScrollSilencing = false;  // reentrancy guard for silent scrollTop fixes
+
+/* C17 — the selection predicate, verbatim from the pre-virtualization
+ * dhRenderLog/appendLine: "All" applies the C7 bucket checkboxes; a
+ * directly selected quest is unaffected by them. Centralized so the view
+ * rebuild and the append path can never disagree about membership. */
+function dhLineInSelection(line) {
+  return dhSelection === "all"
+    ? dhBucketVisible(dhBucketFor(line.questType))
+    : String(line.questId) === dhSelection;
+}
+
+/* C17 — rebuild the filtered view and reset the block state. Runs on
+ * snapshot replay, selection click, and bucket-filter change (all funnel
+ * through dhRenderLog); the running average resets here because the view
+ * content changed — width/font invalidation keeps it (dhInvalidateHeights)
+ * so re-anchoring never falls back to the crude initial guess. */
+function dhRebuildView() {
+  dhViewLines = [];
+  for (const line of dhAllLines) {
+    if (dhLineInSelection(line)) {
+      dhViewLines.push(line);
+    }
+  }
+  dhBlockHeights = new Array(Math.ceil(dhViewLines.length / kBlockRows));
+  for (let b = 0; b < dhBlockHeights.length; b++) {
+    dhBlockHeights[b] = 0;
+  }
+  dhBlockSum = 0;
+  dhBlockMeasured = 0;
+}
+
+/* C17 — current block geometry: measured heights where known, the
+ * running average elsewhere (before anything is measured: one block of
+ * kInitialRowEst-high rows). Returns heights plus prefix offsets and the
+ * total, i.e. the virtual content height the spacers simulate. */
+function dhBlockLayout() {
+  const n = dhBlockHeights.length;
+  const est = dhBlockMeasured > 0 ? dhBlockSum / dhBlockMeasured : kBlockRows * kInitialRowEst;
+  const heights = new Array(n);
+  for (let b = 0; b < n; b++) {
+    heights[b] = dhBlockHeights[b] || est;
+  }
+  const offsets = new Array(n + 1);
+  offsets[0] = 0;
+  for (let b = 0; b < n; b++) {
+    offsets[b + 1] = offsets[b] + heights[b];
+  }
+  return { est: est, heights: heights, offsets: offsets, total: offsets[n] };
+}
+
+/* C17 — the spacers are created once and re-appended around the mounted
+ * blocks by dhRenderLog on every rebuild. */
+function dhEnsureSpacers() {
+  if (!dhTopSpacer) {
+    dhTopSpacer = document.createElement("div");
+    dhBottomSpacer = document.createElement("div");
+  }
+}
+
+/* C17 — build one block's rows (the unchanged dhMakeRow markup) into a
+ * plain wrapper and mount it; the caller owns ordering and measurement. */
+function dhMountBlock(log, b) {
+  const block = document.createElement("div");
+  block.className = "vblock";
+  const start = b * kBlockRows;
+  const end = Math.min(start + kBlockRows, dhViewLines.length);
+  const fragment = document.createDocumentFragment();
+  for (let i = start; i < end; i++) {
+    fragment.append(dhMakeRow(dhViewLines[i]));
+  }
+  block.append(fragment);
+  log.append(block);
+  dhMounted.set(b, block);
+}
+
+/* C17 — spacer heights = summed heights of the unmounted blocks on each
+ * side of the mounted window. Writes are skipped when unchanged so
+ * steady-state scroll handling touches neither style nor layout. */
+function dhSetSpacerHeights(top, bottom) {
+  if (!dhTopSpacer) {
+    return;
+  }
+  const t = top + "px";
+  const b = bottom + "px";
+  if (dhTopSpacer.style.height !== t) {
+    dhTopSpacer.style.height = t;
+  }
+  if (dhBottomSpacer.style.height !== b) {
+    dhBottomSpacer.style.height = b;
+  }
+}
+
+/* C17 — recompute the spacers from the current layout + mounted set
+ * (used by the append paths, which mutate a mounted block or extend the
+ * block list without going through dhUpdateWindow). */
+function dhRefreshSpacers() {
+  if (dhMounted.size === 0 || dhBlockHeights.length === 0) {
+    dhSetSpacerHeights(0, 0);
+    return;
+  }
+  let first = dhBlockHeights.length;
+  let last = -1;
+  for (const b of dhMounted.keys()) {
+    if (b < first) {
+      first = b;
+    }
+    if (b > last) {
+      last = b;
+    }
+  }
+  const layout = dhBlockLayout();
+  dhSetSpacerHeights(layout.offsets[first],
+    layout.total - layout.offsets[last] - layout.heights[last]);
+}
+
+/* C17 — measure mounted blocks whose height is still unknown, in
+ * ascending order. A block that sits fully above the entry viewport
+ * (judged with the pre-measurement layout, which is what the DOM was
+ * built against) contributes its estimate->measured delta; the caller
+ * applies the sum to scrollTop so the visible content stays put. */
+function dhMeasureMountedBlocks(first, last, entryScrollTop, layout) {
+  let delta = 0;
+  for (let b = first; b <= last; b++) {
+    if (dhBlockHeights[b] !== 0) {
+      continue;
+    }
+    const el = dhMounted.get(b);
+    if (!el) {
+      continue;
+    }
+    const h = el.offsetHeight;
+    dhBlockHeights[b] = h;
+    dhBlockSum += h;
+    dhBlockMeasured += 1;
+    if (layout.offsets[b] + layout.heights[b] <= entryScrollTop) {
+      delta += h - layout.heights[b];
+    }
+  }
+  return delta;
+}
+
+/* C17 — scrollTop write under the reentrancy guard: if the engine
+ * dispatches the scroll event synchronously from the setter, the
+ * in-flight window pass finishes before another one starts. */
+function dhSetScrollSilently(log, value) {
+  dhScrollSilencing = true;
+  log.scrollTop = value;
+  dhScrollSilencing = false;
+}
+
+/* C17 — mount the blocks intersecting the viewport +/- one overscan
+ * block and drop the rest. Runs on every #log scroll; in steady state
+ * the window barely moves, so a pass measures at most the couple of
+ * blocks that just entered. Newly measured blocks above the viewport
+ * silently shift scrollTop (reentrancy-guarded) so nothing visible
+ * moves; the spacers are then refreshed against the new measurements. */
+function dhUpdateWindow() {
+  if (dhScrollSilencing) {
+    return;
+  }
+  const log = document.getElementById("log");
+  if (!log) {
+    return;
+  }
+  const n = dhBlockHeights.length;
+  if (n === 0) {
+    for (const el of dhMounted.values()) {
+      el.remove();
+    }
+    dhMounted.clear();
+    dhSetSpacerHeights(0, 0);
+    return;
+  }
+  const layout = dhBlockLayout();
+  const entryScroll = log.scrollTop;
+  const overscanPx = kOverscanBlocks * layout.est;
+  const winTop = entryScroll - overscanPx;
+  const winBottom = entryScroll + log.clientHeight + overscanPx;
+  let first = 0;
+  while (first < n - 1 && layout.offsets[first] + layout.heights[first] <= winTop) {
+    first++;
+  }
+  let last = first;
+  while (last < n - 1 && layout.offsets[last + 1] < winBottom) {
+    last++;
+  }
+  let dirty = false;
+  for (let b = first; b <= last; b++) {
+    if (!dhMounted.has(b)) {
+      dhMountBlock(log, b);
+      dirty = true;
+    }
+  }
+  const strays = [];
+  for (const pair of dhMounted) {
+    if (pair[0] < first || pair[0] > last) {
+      strays.push(pair[0]);
+    }
+  }
+  for (const b of strays) {
+    dhMounted.get(b).remove();
+    dhMounted.delete(b);
+    dirty = true;
+  }
+  if (dirty) {
+    // Re-append ascending: append() on a live child moves it, so one pass
+    // fixes the order and parks the bottom spacer last (topSpacer is
+    // never moved and stays first).
+    for (let b = first; b <= last; b++) {
+      log.append(dhMounted.get(b));
+    }
+    log.append(dhBottomSpacer);
+  }
+  const delta = dhMeasureMountedBlocks(first, last, entryScroll, layout);
+  const now = dhBlockLayout();
+  dhSetSpacerHeights(now.offsets[first],
+    now.total - now.offsets[last] - now.heights[last]);
+  if (delta !== 0) {
+    dhSetScrollSilently(log, entryScroll + delta);
+  }
+}
+
+/* C17 — width or font size changed, so every measured height is stale.
+ * Re-anchor on the block visible at the top edge: remember it, drop the
+ * per-block heights (the running average survives as the re-estimate
+ * seed — re-anchoring on the raw initial guess would teleport deep
+ * scroll positions by anchorBlocks x (avgReal - fallback)), re-window
+ * (which re-measures the mounted blocks and silently corrects), then
+ * re-anchor once more against the refreshed estimates so the same line
+ * really sits at the top. Touching only mounted blocks is what keeps
+ * panel drag-resize cheap. */
+function dhInvalidateHeights() {
+  const log = document.getElementById("log");
+  if (!log || dhBlockHeights.length === 0) {
+    return;
+  }
+  const before = dhBlockLayout();
+  const entryScroll = log.scrollTop;
+  let anchor = 0;
+  while (anchor < before.heights.length - 1
+      && before.offsets[anchor] + before.heights[anchor] <= entryScroll) {
+    anchor++;
+  }
+  for (let b = 0; b < dhBlockHeights.length; b++) {
+    dhBlockHeights[b] = 0;
+  }
+  dhSetScrollSilently(log, anchor * before.est);
+  dhUpdateWindow();
+  const now = dhBlockLayout();
+  const target = now.offsets[anchor];
+  if (Math.abs(target - log.scrollTop) >= 1) {
+    dhSetScrollSilently(log, target);
+    dhUpdateWindow();
+  }
+}
+
+/* C17 — width-driven invalidation hook: dhApplyGeometry runs per
+ * mousemove during panel drag-resize and on setGeometry; the M8 split
+ * drag calls here on mouseup. Only an actual #log clientWidth change
+ * re-anchors (a pure move drag reports the same width), and the first
+ * sighting just seeds the baseline. */
+function dhCheckLogWidth() {
+  const log = document.getElementById("log");
+  if (!log) {
+    return;
+  }
+  const w = log.clientWidth;
+  if (dhLogWidth === -1) {
+    dhLogWidth = w;
+    return;
+  }
+  if (w !== dhLogWidth) {
+    dhLogWidth = w;
+    dhInvalidateHeights();
+  }
+}
+
 /* M5 — movable/resizable panel (geometry persistence is the plugin's job:
  * JS reports the final rect ONCE per drag end via geometryChanged; the plugin
  * pushes setGeometry back when the panel opens). Clamping is duplicated on
@@ -313,6 +626,7 @@ function dhApplyGeometry(geo) {
   panel.style.width = geo.width + "px";
   panel.style.height = geo.height + "px";
   dhRevealPanel();
+  dhCheckLogWidth();  // C17: a resize drag changes the log width
 }
 
 /* Plugin -> JS: apply persisted geometry on open. Absent/invalid payloads
@@ -406,37 +720,54 @@ function dhStartSplitDrag(event) {
   function onUp() {
     document.removeEventListener("mousemove", onMove);
     document.removeEventListener("mouseup", onUp);
+    dhCheckLogWidth();  // C17: the split drag moved the log's width edge
   }
   document.addEventListener("mousemove", onMove);
   document.addEventListener("mouseup", onUp);
 }
 
 /* Right pane: re-render the selected bucket and snap to its newest line.
- * Batched (C6a): all matching rows are built into a DocumentFragment, then
- * one append + one scrollTop write force a single layout pass per render
- * instead of one synchronous reflow per row. C7: in the "All" view, lines
- * whose bucket is unchecked are skipped; a directly selected quest's view
- * is unaffected by the checkboxes (same precedent as search). */
+ * C17: rebuilt as a block window — dhRebuildView re-filters the model,
+ * the final blocks are mounted and measured, and the spacers stand in
+ * for the unmounted rest; scrollTop = scrollHeight then snaps to the
+ * true bottom exactly like the old full render. Batched (C6a): each
+ * block builds its rows into a DocumentFragment, so a rebuild forces
+ * one layout pass per measurement round, not one reflow per row.
+ * C7: in the "All" view, lines whose bucket is unchecked are skipped; a
+ * directly selected quest's view is unaffected by the checkboxes (same
+ * precedent as search). */
 function dhRenderLog() {
   const log = document.getElementById("log");
   const t0 = performance.now();
-  let rendered = 0;
-  const fragment = document.createDocumentFragment();
-  for (const line of dhAllLines) {
-    const inSelection = dhSelection === "all"
-      ? dhBucketVisible(dhBucketFor(line.questType))
-      : String(line.questId) === dhSelection;
-    if (inSelection) {
-      fragment.append(dhMakeRow(line));
-      rendered += 1;
-    }
-  }
+  dhRebuildView();
   log.textContent = "";
-  log.append(fragment);
+  dhMounted.clear();
+  dhEnsureSpacers();
+  log.append(dhTopSpacer);
+  const n = dhBlockHeights.length;
+  const startBlock = Math.max(0, n - (2 * kOverscanBlocks + 1));
+  let mountedRows = 0;
+  for (let b = startBlock; b < n; b++) {
+    dhMountBlock(log, b);
+    mountedRows += Math.min(kBlockRows, dhViewLines.length - b * kBlockRows);
+  }
+  log.append(dhBottomSpacer);
+  if (n > 0) {
+    // Measure before the snap: scrollTop is 0 on the cleared container,
+    // so no above-viewport correction can fire and the snap lands on
+    // truthful geometry (the last block is always measured here).
+    dhMeasureMountedBlocks(startBlock, n - 1, 0, dhBlockLayout());
+    const layout = dhBlockLayout();
+    dhSetSpacerHeights(layout.offsets[startBlock],
+      layout.total - layout.offsets[n - 1] - layout.heights[n - 1]);
+  } else {
+    dhSetSpacerHeights(0, 0);
+  }
   log.scrollTop = log.scrollHeight;
   dhSetEmptyVisible(dhAllLines.length === 0);
   const t1 = performance.now();
-  console.info("[DialogueHistory] render: " + rendered + " rows in " + (t1 - t0).toFixed(1) + " ms");
+  console.info("[DialogueHistory] render: view " + dhViewLines.length
+    + " lines, mounted " + mountedRows + " rows in " + (t1 - t0).toFixed(1) + " ms");
 }
 
 function setHistory(lines) {
@@ -499,16 +830,53 @@ function appendLine(line) {
   }
   dhAllLines.push(line);
   dhRenderIndex();  // cheap (bounded by the buffer size): recount + resort
-  // C7: mirror dhRenderLog's visibility — never append a hidden-bucket line
+  // C7: mirror the view predicate — never append a hidden-bucket line
   // into the "All" view; a selected quest's view stays unaffected.
-  const inSelection = dhSelection === "all"
-    ? dhBucketVisible(dhBucketFor(line.questType))
-    : String(line.questId) === dhSelection;
-  if (inSelection) {
+  if (dhLineInSelection(line)) {
     const log = document.getElementById("log");
+    // Scroll contract: the at-bottom test runs BEFORE the DOM grows.
     const atBottom = log.scrollTop + log.clientHeight >= log.scrollHeight - 4;
+    dhViewLines.push(line);
     dhSetEmptyVisible(false);
-    log.append(dhMakeRow(line));
+    const prevBlocks = dhBlockHeights.length;
+    const newBlocks = Math.ceil(dhViewLines.length / kBlockRows);
+    if (newBlocks > prevBlocks) {
+      dhBlockHeights.push(0);  // the boundary row starts a new block
+    }
+    const last = newBlocks - 1;
+    if (newBlocks > prevBlocks) {
+      // Boundary crossed: mount the fresh block only when the previous
+      // tail block is mounted (i.e. the user is at the bottom); while
+      // scrolled up there is no row DOM work — the taller bottom spacer
+      // keeps the scrollbar truthful.
+      if (prevBlocks === 0 || dhMounted.has(prevBlocks - 1)) {
+        dhMountBlock(log, last);
+        log.append(dhBottomSpacer);  // keep the spacer the last child
+        const el = dhMounted.get(last);
+        const h = el.offsetHeight;
+        if (dhBlockHeights[last] !== 0) {
+          dhBlockSum += h - dhBlockHeights[last];
+        } else {
+          dhBlockSum += h;
+          dhBlockMeasured += 1;
+        }
+        dhBlockHeights[last] = h;
+      }
+      dhRefreshSpacers();
+    } else if (dhMounted.has(last)) {
+      const el = dhMounted.get(last);
+      el.append(dhMakeRow(line));
+      const h = el.offsetHeight;  // the block grew by one row
+      if (dhBlockHeights[last] !== 0) {
+        dhBlockSum += h - dhBlockHeights[last];
+      } else {
+        dhBlockSum += h;
+        dhBlockMeasured += 1;
+      }
+      dhBlockHeights[last] = h;
+      dhRefreshSpacers();
+    }
+    // else: last block not mounted — state and spacers only.
     if (atBottom) {
       log.scrollTop = log.scrollHeight;
     }
@@ -517,6 +885,7 @@ function appendLine(line) {
 
 function setFontSize(size) {
   document.getElementById("log").style.fontSize = Number(size) + "px";
+  dhInvalidateHeights();  // C17: row heights changed — re-estimate + re-anchor
 }
 
 function dhSend(eventName) {
@@ -687,6 +1056,10 @@ document.addEventListener("DOMContentLoaded", () => {
   const split = document.getElementById("split");
   if (split) {
     split.addEventListener("mousedown", dhStartSplitDrag);
+  }
+  const log = document.getElementById("log");
+  if (log) {
+    log.addEventListener("scroll", dhUpdateWindow);  // C17 windowing
   }
   const clearBtn = document.getElementById("clear");
   if (clearBtn) {
