@@ -1,5 +1,8 @@
 #pragma once
 
+#include <cstdint>
+#include <vector>
+
 #include "Core/Dialogue/DialogueBuffer.h"
 #include "Core/ILogger.h"
 #include "IViewBridge.h"
@@ -27,6 +30,7 @@ namespace F4DH::Application
 		// the bridge's clear callbacks).
 		void OnClearAll();
 		void OnClearQuest(std::uint32_t questId);
+		void OnClearQuests(const std::vector<std::uint32_t>& questIds);  // multi-quest selection clear: one pass per id, one snapshot
 
 		// Mirrors the OnClearAll refresh: a bulk buffer mutation outside the
 		// capture path (stress-test injector) needs a full snapshot re-push.

@@ -262,6 +262,7 @@ namespace F4DH
 
 		bridge.SetFontSize(root.settings.fontSize);
 		bridge.SetGeometry(root.settings.panelGeometry);
+		bridge.SetFilters(root.settings.viewFilters);
 		bridge.SetSettingsSink(&settingsStore);
 		Application::ViewController::SetCloseTarget(&viewController);
 

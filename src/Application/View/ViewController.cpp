@@ -32,6 +32,13 @@ namespace F4DH::Application
 				g_target->OnClearQuest(questId);
 			}
 		}
+
+		void ClearQuestsThunk(const std::vector<std::uint32_t>& questIds)
+		{
+			if (g_target) {
+				g_target->OnClearQuests(questIds);
+			}
+		}
 	}
 
 	void ViewController::SetCloseTarget(ViewController* instance) noexcept
@@ -46,6 +53,7 @@ namespace F4DH::Application
 	{
 		_bridge.SetCloseCallback(&CloseThunk);
 		_bridge.SetClearCallbacks(&ClearAllThunk, &ClearQuestThunk);
+		_bridge.SetClearQuestsCallback(&ClearQuestsThunk);
 	}
 
 	void ViewController::Toggle()
@@ -85,6 +93,15 @@ namespace F4DH::Application
 	{
 		const auto removed = _buffer.RemoveQuest(questId);
 		_logger.Info(std::format("clear history: removed {} line(s) for questId {}", removed, questId));
+		_bridge.PushSnapshot(Core::PayloadBuilder::BuildSnapshot(_buffer.Snapshot()));
+	}
+
+	void ViewController::OnClearQuests(const std::vector<std::uint32_t>& questIds)
+	{
+		for (const auto questId : questIds) {
+			const auto removed = _buffer.RemoveQuest(questId);
+			_logger.Info(std::format("clear history: removed {} line(s) for questId {}", removed, questId));
+		}
 		_bridge.PushSnapshot(Core::PayloadBuilder::BuildSnapshot(_buffer.Snapshot()));
 	}
 

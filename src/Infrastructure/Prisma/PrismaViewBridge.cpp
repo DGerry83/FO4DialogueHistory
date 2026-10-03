@@ -34,6 +34,7 @@ namespace F4DH::Infrastructure
 		PrismaViewBridge::CloseCallback  g_closeCallback{ nullptr };
 		PrismaViewBridge::ClearAllCallback   g_clearAllCallback{ nullptr };
 		PrismaViewBridge::ClearQuestCallback g_clearQuestCallback{ nullptr };
+		PrismaViewBridge::ClearQuestsCallback g_clearQuestsCallback{ nullptr };
 		std::string                      g_snapshotCache;
 		bool                             g_prismaMissingLogged{ false };
 		bool                             g_createResultLogged{ false };
@@ -118,6 +119,60 @@ namespace F4DH::Infrastructure
 			});
 		}
 
+		void OnClearQuestsRequested(const char* a_payload)
+		{
+			// Fires on PrismaUI's thread. Parsing is pure, so split and
+			// validate the comma-joined decimal questIds here and drop
+			// malformed tokens before paying for a game-thread hop; the
+			// mutation itself runs on the game thread like every other buffer
+			// operation.
+			const std::string          payload = a_payload ? a_payload : "";
+			std::vector<std::uint32_t> questIds;
+			std::size_t                dropped = 0;
+
+			std::size_t start = 0;
+			while (start <= payload.size()) {
+				const auto comma = payload.find(',', start);
+				const auto end   = comma == std::string::npos ? payload.size() : comma;
+				auto       token = std::string_view(payload).substr(start, end - start);
+				while (!token.empty() && (token.front() == ' ' || token.front() == '\t' ||
+						   token.front() == '\r' || token.front() == '\n')) {
+					token.remove_prefix(1);
+				}
+				while (!token.empty() && (token.back() == ' ' || token.back() == '\t' ||
+						   token.back() == '\r' || token.back() == '\n')) {
+					token.remove_suffix(1);
+				}
+
+				std::uint32_t questId = 0;
+				const auto    parsed = std::from_chars(token.data(), token.data() + token.size(), questId);
+				if (parsed.ec == std::errc() && parsed.ptr == token.data() + token.size()) {
+					questIds.push_back(questId);
+				} else {
+					dropped += 1;
+				}
+
+				if (comma == std::string::npos) {
+					break;
+				}
+				start = comma + 1;
+			}
+
+			if (questIds.empty()) {
+				REX::LogInformation("PrismaViewBridge: clearQuestsRequested payload '{}' had no valid quest ids — ignoring", payload);
+				return;
+			}
+			if (dropped > 0) {
+				REX::LogWarning("PrismaViewBridge: dropped {} malformed quest id token(s) from clearQuestsRequested payload '{}'",
+					dropped, payload);
+			}
+			Dispatch([questIds] {
+				if (g_clearQuestsCallback) {
+					g_clearQuestsCallback(questIds);
+				}
+			});
+		}
+
 		void OnGeometryChanged(const char* a_json)
 		{
 			// Fires on PrismaUI's thread; parse + persist on the game thread
@@ -126,6 +181,19 @@ namespace F4DH::Infrastructure
 			Dispatch([payload] {
 				if (g_bridge) {
 					g_bridge->HandleGeometryReport(payload);
+				}
+			});
+		}
+
+		void OnFiltersChanged(const char* a_json)
+		{
+			// Fires on PrismaUI's thread; parse + persist on the game thread
+			// (INI write at checkbox-change cadence, user-gesture bounded) —
+			// the exact geometryChanged split.
+			const std::string payload = a_json ? a_json : "";
+			Dispatch([payload] {
+				if (g_bridge) {
+					g_bridge->HandleFiltersReport(payload);
 				}
 			});
 		}
@@ -154,8 +222,10 @@ namespace F4DH::Infrastructure
 			g_api->RegisterJSListener(a_view, "requestHistory", &OnRequestHistory);
 			g_api->RegisterJSListener(a_view, "closeRequested", &OnCloseRequested);
 			g_api->RegisterJSListener(a_view, "geometryChanged", &OnGeometryChanged);
+			g_api->RegisterJSListener(a_view, "filtersChanged", &OnFiltersChanged);
 			g_api->RegisterJSListener(a_view, "clearAllRequested", &OnClearAllRequested);
 			g_api->RegisterJSListener(a_view, "clearQuestRequested", &OnClearQuestRequested);
+			g_api->RegisterJSListener(a_view, "clearQuestsRequested", &OnClearQuestsRequested);
 			g_api->SetViewRole(a_view, PRISMA_UI_API::ViewRole::kPanel);
 			g_api->SetViewOwnsEscape(a_view, true);
 			// Deterministic snapshot replay: the view's requestHistory can fire
@@ -167,6 +237,7 @@ namespace F4DH::Infrastructure
 			// the PushSnapshot path above, so apply it here too.
 			if (g_bridge) {
 				g_bridge->ApplyGeometry();
+				g_bridge->ApplyFilters();
 			}
 			if (g_focusPending) {
 				g_focusPending = false;
@@ -304,6 +375,7 @@ namespace F4DH::Infrastructure
 		if (IsHealthy()) {
 			_api->InteropCall(_view, "setFontSize", std::to_string(_fontSize).c_str());
 			ApplyGeometry();
+			ApplyFilters();
 			_api->InteropCall(_view, "setHistory", json.c_str());
 		}
 	}
@@ -334,6 +406,12 @@ namespace F4DH::Infrastructure
 		_clearQuestCallback = questFn;
 		g_clearAllCallback = allFn;
 		g_clearQuestCallback = questFn;
+	}
+
+	void PrismaViewBridge::SetClearQuestsCallback(ClearQuestsCallback questsFn)
+	{
+		_clearQuestsCallback = questsFn;
+		g_clearQuestsCallback = questsFn;
 	}
 
 	void PrismaViewBridge::SetFontSize(int fontSize) noexcept
@@ -370,6 +448,33 @@ namespace F4DH::Infrastructure
 	{
 		if (_api && _view != 0 && _geometry && IsHealthy()) {
 			_api->InteropCall(_view, "setGeometry", Core::FormatPanelGeometry(*_geometry).c_str());
+		}
+	}
+
+	void PrismaViewBridge::SetFilters(const Core::ViewFilterState& filters) noexcept
+	{
+		_filters = filters;
+	}
+
+	void PrismaViewBridge::HandleFiltersReport(const std::string& a_jsonPayload)
+	{
+		Core::ViewFilterState filters;
+		if (!Core::ParseViewFilterState(a_jsonPayload, filters)) {
+			REX::LogWarning("PrismaViewBridge: ignoring malformed filtersChanged payload");
+			return;
+		}
+		_filters = filters;
+		if (_settingsStore) {
+			_settingsStore->SaveViewFilters(filters);
+		}
+		REX::LogInformation("PrismaViewBridge: view filters changed (main={} side={} misc={} unattributed={})",
+			filters.main, filters.side, filters.misc, filters.unattributed);
+	}
+
+	void PrismaViewBridge::ApplyFilters()
+	{
+		if (_api && _view != 0 && IsHealthy()) {
+			_api->InteropCall(_view, "setFilters", Core::FormatViewFilterState(_filters).c_str());
 		}
 	}
 

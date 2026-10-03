@@ -21,6 +21,7 @@ add_executable(Core.Tests
 	PayloadBuilderTests.cpp
 	CosaveCodecTests.cpp
 	PanelGeometryTests.cpp
+	ViewFilterStateTests.cpp
 	AliasTokensTests.cpp
 	StressTestDataGeneratorTests.cpp
 	ScanCodeMapTests.cpp
@@ -28,6 +29,7 @@ add_executable(Core.Tests
 	${CMAKE_SOURCE_DIR}/src/Core/Dialogue/CosaveCodec.cpp
 	${CMAKE_SOURCE_DIR}/src/Core/Dialogue/StressTestDataGenerator.cpp
 	${CMAKE_SOURCE_DIR}/src/Core/Geometry/PanelGeometry.cpp
+	${CMAKE_SOURCE_DIR}/src/Core/Settings/ViewFilterState.cpp
 	${CMAKE_SOURCE_DIR}/src/Core/Input/ScanCodeMap.cpp
 )
 

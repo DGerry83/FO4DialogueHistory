@@ -5,6 +5,7 @@
 #include <optional>
 
 #include "Core/Geometry/PanelGeometry.h"
+#include "Core/Settings/ViewFilterState.h"
 
 namespace F4DH::Application
 {
@@ -23,5 +24,6 @@ namespace F4DH::Application
 		std::uint32_t stressTestLines = 500;   // [Diagnostics] StressTestLines: lines per injected batch (clamped 1-5000)
 		std::uint32_t stressTestQuests = 20;   // [Diagnostics] StressTestQuests: synthetic quests per batch (clamped 1-100)
 		std::optional<Core::PanelGeometry> panelGeometry;  // absent = default centered layout
+		Core::ViewFilterState viewFilters;  // quest-bucket checkboxes; default all-true, loaded from the sibling view.ini when present
 	};
 }

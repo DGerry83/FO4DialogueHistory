@@ -30,6 +30,7 @@ namespace
 {
 	constexpr std::wstring_view kIniFileName{ L"FO4DialogueHistory.ini" };
 	constexpr std::wstring_view kGeometryFileName{ L"FO4DialogueHistory.geometry.ini" };
+	constexpr std::wstring_view kViewFileName{ L"FO4DialogueHistory.view.ini" };
 
 	[[nodiscard]] std::wstring ResolveSiblingPath(std::wstring_view a_fileName)
 	{
@@ -155,6 +156,63 @@ namespace
 			};
 		}
 		return std::nullopt;
+	}
+
+	// Section-locked [Settings] scan for the four filter keys. Per-key
+	// tolerance: a missing key leaves that bucket at its default (shown);
+	// a non-numeric value is ignored with a warning. Any nonzero value = on.
+	[[nodiscard]] F4DH::Core::ViewFilterState ExtractViewFilters(const std::vector<std::string>& a_lines)
+	{
+		F4DH::Core::ViewFilterState filters;
+		bool                         inSettingsSection{ false };
+
+		for (const auto& line : a_lines) {
+			std::string_view view{ line };
+
+			const auto comment = view.find_first_of(";#");
+			if (comment != std::string_view::npos) {
+				view = view.substr(0, comment);
+			}
+			view = Trim(view);
+			if (view.empty()) {
+				continue;
+			}
+
+			if (view.front() == '[' && view.back() == ']') {
+				inSettingsSection = ToLower(Trim(view.substr(1, view.size() - 2))) == "settings";
+				continue;
+			}
+			if (!inSettingsSection) {
+				continue;
+			}
+
+			const auto eq = view.find('=');
+			if (eq == std::string_view::npos) {
+				continue;
+			}
+			const auto key   = ToLower(Trim(view.substr(0, eq)));
+			const auto value = Trim(view.substr(eq + 1));
+
+			if (key.rfind("filter", 0) != 0) {
+				continue;  // not a filter key
+			}
+			std::uint32_t parsed = 0;
+			if (!ParseUint(value, parsed)) {
+				REX::LogWarning("IniSettingsStore: invalid filter value '{}' — keeping default (shown)", value);
+				continue;
+			}
+			const bool on = parsed != 0;
+			if (key == "filtermain") {
+				filters.main = on;
+			} else if (key == "filterside") {
+				filters.side = on;
+			} else if (key == "filtermisc") {
+				filters.misc = on;
+			} else if (key == "filterunattributed") {
+				filters.unattributed = on;
+			}
+		}
+		return filters;
 	}
 }
 
@@ -309,6 +367,17 @@ namespace F4DH::Infrastructure
 			REX::LogInformation("IniSettingsStore: panel geometry loaded ({}x{} at {},{})", g.width, g.height, g.x, g.y);
 		}
 
+		// Filter sidecar: the sibling view file wins when present; absent file
+		// or keys leave the all-true defaults in place.
+		const auto viewPath = ResolveSiblingPath(kViewFileName);
+		const auto viewLines = ReadLines(viewPath);
+		if (!viewLines.empty()) {
+			settings.viewFilters = ExtractViewFilters(viewLines);
+			const auto& f = settings.viewFilters;
+			REX::LogInformation("IniSettingsStore: view filters loaded (main={} side={} misc={} unattributed={})",
+				f.main, f.side, f.misc, f.unattributed);
+		}
+
 		return settings;
 	}
 
@@ -330,5 +399,25 @@ namespace F4DH::Infrastructure
 				a_geometry.x, a_geometry.y, a_geometry.width, a_geometry.height);
 		REX::LogInformation("IniSettingsStore: panel geometry saved ({}x{} at {},{})",
 			a_geometry.width, a_geometry.height, a_geometry.x, a_geometry.y);
+	}
+
+	void IniSettingsStore::SaveViewFilters(const Core::ViewFilterState& a_filters)
+	{
+		// Same sidecar discipline as SaveGeometry: write ONLY the sibling view
+		// file — never the user's main INI. Runs on the game thread at
+		// checkbox-change cadence (user gesture) — bounded and infrequent.
+		const auto path = ResolveSiblingPath(kViewFileName);
+
+		std::ofstream file(path, std::ios::binary | std::ios::trunc);
+		if (!file) {
+			REX::LogError(L"IniSettingsStore: failed to open {} for writing — view filters not persisted", path);
+			return;
+		}
+		file << "[Settings]\n"
+			<< std::format("FilterMain = {}\nFilterSide = {}\nFilterMisc = {}\nFilterUnattributed = {}\n",
+				a_filters.main ? 1 : 0, a_filters.side ? 1 : 0,
+				a_filters.misc ? 1 : 0, a_filters.unattributed ? 1 : 0);
+		REX::LogInformation("IniSettingsStore: view filters saved (main={} side={} misc={} unattributed={})",
+			a_filters.main, a_filters.side, a_filters.misc, a_filters.unattributed);
 	}
 }

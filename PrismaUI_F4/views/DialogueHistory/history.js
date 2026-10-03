@@ -9,11 +9,17 @@
  *               setGeometry(json)   {"x","y","width","height"} — persisted
  *                                     panel rect; absent/invalid = keep the
  *                                     default centered layout
+ *               setFilters(json)    {"main","side","misc","unattributed"} —
+ *                                     persisted bucket checkboxes (#001);
+ *                                     absent = all-checked default
  * JS -> plugin: window.requestHistory() on DOM ready
  *               window.closeRequested() on Esc
  *               window.geometryChanged(json) once per drag end (M5)
+ *               window.filtersChanged(json) once per checkbox change (#001)
  *               window.clearAllRequested("") / window.clearQuestRequested(
- *                 "<decimal questId>") on confirmed clear (C5)
+ *                 "<decimal questId>") / window.clearQuestsRequested(
+ *                 "<decimal questId,decimal questId,...>") on confirmed
+ *                 clear (C5, #003)
  * (RegisterJSListener binds each name as a global window function;
  * window.prisma has no sendEvent — its emit() routes to Papyrus only.)
  * Two-pane model (M4): dhAllLines is the client-side source of truth (the
@@ -66,10 +72,30 @@ function dhSetEmptyVisible(visible) {
 }
 
 /* Client-side model (M4): the plugin pushes lines and full snapshots; the
- * view owns grouping, selection, and search. dhSelection is "all",
- * "0" (unattributed), or the decimal questId string. */
+ * view owns grouping, selection, and search. Selection is a SET of quest
+ * keys (#003): the Set IS the selection — "All" is the empty set, a plain
+ * click selects exactly {key}, Ctrl/Cmd+click toggles membership. dhSelection
+ * mirrors the set (the sole key while exactly one quest is selected, "all"
+ * otherwise) so the single-select paths keep working unchanged. */
 const dhAllLines = [];
 let dhSelection = "all";
+const dhSelectedQuests = new Set();
+
+/* #003 — keep the dhSelection mirror in sync with the selection set: the
+ * sole key while exactly one quest is selected, "all" for zero or many.
+ * Call after EVERY dhSelectedQuests mutation. */
+function dhSyncSelectionMirror() {
+  dhSelection = dhSelectedQuests.size === 1
+    ? dhSelectedQuests.values().next().value
+    : "all";
+}
+
+/* #003 — index-row active test: with a non-empty set every selected quest
+ * is active; otherwise only the dhSelection key is (the "All" row when
+ * dhSelection is "all"). */
+function dhIsSelectedKey(key) {
+  return dhSelectedQuests.size > 0 ? dhSelectedQuests.has(key) : key === dhSelection;
+}
 
 /* Normalize one raw payload line into the model. Tolerant of old-DLL
  * payloads: missing quest fields default to 0/"", missing/non-finite
@@ -146,9 +172,10 @@ const dhBucketLabels = {
   unattributed: "Unattributed"
 };
 
-/* C7 — checkbox ids per bucket. State lives in the DOM (session-only, no
- * persistence) and defaults to all-checked via the markup; a missing box
- * (old html) means the bucket stays visible. */
+/* C7 — checkbox ids per bucket. State lives in the DOM and is persisted by
+ * the plugin (#001: setFilters pushes the saved state in, filtersChanged
+ * reports changes out); the markup defaults to all-checked and a missing
+ * box (old html) means the bucket stays visible. */
 const dhBuckets = ["main", "side", "misc", "unattributed"];
 
 function dhBucketVisible(bucket) {
@@ -157,11 +184,71 @@ function dhBucketVisible(bucket) {
 }
 
 /* Checkbox change: re-filter the index; the log only when the "All" view is
- * up (a selected quest's view is unaffected by the checkboxes). */
+ * up (#003: empty selection set and the mirror "all") — a selected quest's
+ * view, single or multi, is unaffected by the checkboxes. */
 function dhFilterChanged() {
   dhRenderIndex();
-  if (dhSelection === "all") {
+  if (dhSelectedQuests.size === 0 && dhSelection === "all") {
     dhRenderLog();
+  }
+}
+
+/* #001 — persisted bucket filters. The plugin pushes the saved state via
+ * setFilters (on view open and before every snapshot replay) and the view
+ * reports every checkbox change back through filtersChanged. With an old
+ * DLL no push ever arrives: dhFilterState stays null and the view keeps the
+ * all-checked default (today's behavior). */
+let dhFilterState = null;  // last pushed persisted state (null = never pushed)
+
+/* Apply a filter state to the four checkbox elements, when present. Pure
+ * checked-state application — no re-render side effects (matches how
+ * setGeometry/dhApplyGeometry behaves); the snapshot replay that follows a
+ * push re-renders against the new state anyway. */
+function dhApplyFilterState(state) {
+  for (const bucket of dhBuckets) {
+    const box = document.getElementById("ftype-" + bucket);
+    if (box) {
+      box.checked = state[bucket];
+    }
+  }
+}
+
+/* Plugin -> JS: persisted filter state on open / before snapshot replay.
+ * Tolerant per-field parse mirroring the C++ ViewFilterState semantics
+ * (D4 ruling): each key is independently validated as a boolean, a missing
+ * or invalid key keeps the true default; a payload that does not parse to a
+ * JSON object is dropped entirely. Applies the checked state only. */
+function setFilters(json) {
+  const parsed = dhParse(json, null);
+  if (!parsed || typeof parsed !== "object") {
+    return;
+  }
+  const state = {};
+  for (const bucket of dhBuckets) {
+    state[bucket] = typeof parsed[bucket] === "boolean" ? parsed[bucket] : true;
+  }
+  dhFilterState = state;
+  dhApplyFilterState(state);
+}
+
+/* Current checkbox state as a filter-state object, in the contract's exact
+ * key order (dhBuckets). A missing box (old html) reads as visible. */
+function dhFiltersFromBoxes() {
+  const state = {};
+  for (const bucket of dhBuckets) {
+    const box = document.getElementById("ftype-" + bucket);
+    state[bucket] = !box || box.checked;
+  }
+  return state;
+}
+
+/* JS -> plugin: report the checkbox state after a change, exactly once per
+ * change event (wired as a second listener after dhFilterChanged).
+ * Optional call — old DLLs never register the listener. */
+function dhReportFilters() {
+  const fn = window.filtersChanged;
+  if (typeof fn === "function") {  // registered by the plugin (new DLLs)
+    fn(JSON.stringify(dhFiltersFromBoxes()));
   }
 }
 
@@ -204,7 +291,7 @@ function dhBuildIndex() {
 
 function dhMakeEntry(key, label, count, type) {
   const row = document.createElement("div");
-  row.className = "qentry" + (key === dhSelection ? " active" : "");
+  row.className = "qentry" + (dhIsSelectedKey(key) ? " active" : "");
   row.dataset.key = key;
   const name = document.createElement("span");
   name.className = "qname";
@@ -221,8 +308,23 @@ function dhMakeEntry(key, label, count, type) {
   num.className = "qcount";
   num.textContent = String(count);
   row.append(num);
-  row.addEventListener("click", function () {
-    dhSelection = key;
+  row.addEventListener("click", function (event) {
+    // #003: "All" is always an exclusive reset; a plain click selects
+    // exactly the clicked quest; Ctrl/Cmd+click toggles membership in the
+    // selection set. Emptying the set returns to "All" (mirror sync).
+    if (key === "all") {
+      dhSelectedQuests.clear();
+    } else if (event.ctrlKey || event.metaKey) {
+      if (dhSelectedQuests.has(key)) {
+        dhSelectedQuests.delete(key);
+      } else {
+        dhSelectedQuests.add(key);
+      }
+    } else {
+      dhSelectedQuests.clear();
+      dhSelectedQuests.add(key);
+    }
+    dhSyncSelectionMirror();
     dhRenderIndex();
     dhRenderLog();
   });
@@ -315,11 +417,15 @@ let dhScrollSilencing = false;  // reentrancy guard for silent scrollTop fixes
 let dhDragActive = false;       // C18: a panel or split drag is in progress
 let dhPaneFreeze = null;        // C19: saved pane inline styles while frozen (null = not frozen)
 
-/* C17 — the selection predicate, verbatim from the pre-virtualization
- * dhRenderLog/appendLine: "All" applies the C7 bucket checkboxes; a
- * directly selected quest is unaffected by them. Centralized so the view
- * rebuild and the append path can never disagree about membership. */
+/* C17/#003 — the selection predicate, verbatim from the pre-virtualization
+ * dhRenderLog/appendLine: "All" (empty set) applies the C7 bucket checkboxes;
+ * a non-empty selection set matches membership only — single or multi, the
+ * checkboxes don't apply (user ruling, G9). Centralized so the view rebuild
+ * and the append path can never disagree about membership. */
 function dhLineInSelection(line) {
+  if (dhSelectedQuests.size > 0) {
+    return dhSelectedQuests.has(String(line.questId));
+  }
   return dhSelection === "all"
     ? dhBucketVisible(dhBucketFor(line.questType))
     : String(line.questId) === dhSelection;
@@ -914,21 +1020,18 @@ function setHistory(lines) {
     lines = [];
   }
   // Full snapshot replay (sent on panel open): reset to the defaults —
-  // "All" selected, search cleared, all C7 bucket filters re-checked
-  // (filter state is session-only — accepted post-replay UX) — then rebuild
-  // model and panes.
+  // "All" selected (selection set cleared), search cleared — then apply the
+  // persisted filter state (#001; all-checked default when the plugin never
+  // pushed one, e.g. an old DLL) and rebuild model and panes.
   dhAllLines.length = 0;
   dhSelection = "all";
+  dhSelectedQuests.clear();
   const search = document.getElementById("search");
   if (search) {
     search.value = "";
   }
-  for (const bucket of dhBuckets) {
-    const box = document.getElementById("ftype-" + bucket);
-    if (box) {
-      box.checked = true;
-    }
-  }
+  dhApplyFilterState(dhFilterState
+    || { main: true, side: true, misc: true, unattributed: true });
   for (const raw of lines) {
     const line = dhNormalizeLine(raw);
     if (line) {
@@ -1035,13 +1138,16 @@ function dhSend(eventName) {
   }
 }
 
-/* Clear history (C5): one selection-scoped path. The Clear button opens a
- * confirmation overlay naming the scope; Confirm dispatches to the plugin,
- * Cancel/Esc hides the overlay without touching the model (Esc must NOT
- * fall through to closeRequested while the overlay is up). After the
- * plugin mutates the buffer it re-pushes a snapshot; setHistory's reset
- * (selection -> "All", search cleared) is the accepted post-clear UX. */
-let dhClearTarget = "all";  // "all" or the decimal questId string
+/* Clear history (C5/#003): one selection-scoped path. The Clear button opens
+ * a confirmation overlay naming the scope — "all", a single quest (also a
+ * one-quest selection set), or "multiple quests" for a larger set; Confirm
+ * dispatches to the plugin, Cancel/Esc hides the overlay without touching
+ * the model (Esc must NOT fall through to closeRequested while the overlay
+ * is up). After the plugin mutates the buffer it re-pushes a snapshot;
+ * setHistory's reset (selection -> "All", search cleared) is the accepted
+ * post-clear UX. */
+let dhClearTarget = "all";  // "all", "multi", or the decimal questId string
+let dhClearIds = [];        // #003: numerically sorted ids captured for "multi"
 
 /* Display name for a quest-scope clear target (only called when
  * dhClearTarget is a questId, never "all"). */
@@ -1060,7 +1166,16 @@ function dhOverlayVisible() {
 }
 
 function dhShowClearOverlay() {
-  dhClearTarget = dhSelection;
+  // #003: the clear scope is the current selection — "all", a single quest
+  // (incl. a one-quest selection set), or "multi" with the numerically
+  // sorted ids for a larger set (deterministic payload order).
+  if (dhSelectedQuests.size > 1) {
+    dhClearTarget = "multi";
+    dhClearIds = Array.from(dhSelectedQuests, Number).sort(function (a, b) { return a - b; });
+  } else {
+    dhClearTarget = dhSelection;
+    dhClearIds = [];
+  }
   const msg = document.getElementById("overlaymsg");
   if (msg) {
     // C16: the message names its scope. Built from text nodes (never
@@ -1074,8 +1189,8 @@ function dhShowClearOverlay() {
         document.createTextNode(" dialogue history. Are you sure?"));
     } else {
       const name = document.createElement("span");
-      name.className = "clearscope";
-      name.textContent = dhClearScopeText();
+      name.className = "clearscope";  // "multiple quests" keeps the quest-scope styling
+      name.textContent = dhClearTarget === "multi" ? "multiple quests" : dhClearScopeText();
       msg.append(document.createTextNode("This will clear all dialogue history for "), name,
         document.createTextNode(". Are you sure?"));
     }
@@ -1099,6 +1214,11 @@ function dhConfirmClear() {
     const fn = window.clearAllRequested;
     if (typeof fn === "function") {  // registered by the plugin (new DLLs)
       fn("");
+    }
+  } else if (dhClearTarget === "multi") {
+    const fn = window.clearQuestsRequested;
+    if (typeof fn === "function") {  // registered by the plugin (new DLLs)
+      fn(dhClearIds.join(","));
     }
   } else {
     const fn = window.clearQuestRequested;
@@ -1181,6 +1301,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const box = document.getElementById("ftype-" + bucket);
     if (box) {
       box.addEventListener("change", dhFilterChanged);
+      box.addEventListener("change", dhReportFilters);  // #001: after dhFilterChanged
     }
   }
   const header = document.getElementById("header");

@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace F4DH::Application
 {
@@ -12,6 +13,7 @@ namespace F4DH::Application
 		using CloseCallback = void (*)();
 		using ClearAllCallback = void (*)();
 		using ClearQuestCallback = void (*)(std::uint32_t);
+		using ClearQuestsCallback = void (*)(const std::vector<std::uint32_t>&);
 
 		virtual ~IViewBridge() = default;
 
@@ -24,6 +26,7 @@ namespace F4DH::Application
 		virtual void AppendLine(const std::string& json) = 0;
 		virtual void SetCloseCallback(CloseCallback fn) = 0;
 		virtual void SetClearCallbacks(ClearAllCallback allFn, ClearQuestCallback questFn) = 0;
+		virtual void SetClearQuestsCallback(ClearQuestsCallback questsFn) = 0;
 		[[nodiscard]] virtual bool IsHealthy() = 0;
 	};
 }

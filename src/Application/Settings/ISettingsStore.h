@@ -17,5 +17,10 @@ namespace F4DH::Application
 		// view reports a finished drag/resize; implementations may rewrite
 		// their backing store, preserving unrelated settings.
 		virtual void SaveGeometry(const Core::PanelGeometry& a_geometry) = 0;
+
+		// Persists the quest-bucket filter checkboxes. Called on the game
+		// thread when the view reports a filter change; implementations may
+		// rewrite their backing store, preserving unrelated settings.
+		virtual void SaveViewFilters(const Core::ViewFilterState& a_filters) = 0;
 	};
 }
