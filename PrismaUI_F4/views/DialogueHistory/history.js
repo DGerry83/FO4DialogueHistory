@@ -20,10 +20,11 @@
  *                 "<decimal questId>") / window.clearQuestsRequested(
  *                 "<decimal questId,decimal questId,...>") on confirmed
  *                 clear (C5, #003)
- * Keyboard surface (C6): one document-level keydown handler — Esc closes
- * (overlay up: dismiss only); arrows/Enter/Space/PageUp-Down drive a
- * roving focus model (zones search -> filters -> quests -> log -> clear;
- * Left/Right cycle with wrap, Up/Down move within a zone and across zones
+ * Keyboard surface (C6): one document-level keydown handler — Esc clears
+ * a focused non-empty search box first, else closes (overlay up: dismiss
+ * only); arrows/Enter/Space/PageUp-Down drive a roving focus model (zones
+ * search -> filters -> quests -> bodysearch -> log -> clear; Left/Right
+ * cycle with wrap, Up/Down move within a zone and across zones
  * at edges, Enter/Space activate; the clear-confirm overlay traps focus,
  * starting on Cancel). PrismaUI's legacy controller conversion
  * (D-pad -> arrows, A -> Enter, B -> Escape) rides the same events, so
@@ -40,9 +41,12 @@
  * scope = current selection / forced ALL — and are ignored while the
  * overlay is up; clear_quest does nothing when no quest is selected.
  * page_up/page_down and jump_oldest/jump_newest delegate to the C6
- * dhFocus* scroll surface; close mirrors Esc exactly (overlay up: dismiss
- * only; else closeRequested). A/B/D-pad never arrive here — they stay on
- * the legacy synthetic-key route the focus model consumes.
+ * dhFocus* scroll surface (body search: while a term is active,
+ * page_up/page_down WALK MATCHES via dhBodySearchPageOrMatch instead of
+ * paging; a cleared term restores paging); close mirrors Esc exactly
+ * (overlay up: dismiss only; else closeRequested). A/B/D-pad never
+ * arrive here — they stay on the legacy synthetic-key route the focus
+ * model consumes.
  * Device-aware hints (C8): the plugin pushes the active input device via
  * setInputDevice({"gamepad":bool}) from OnDomReady and every Focus/re-open
  * (V12 runtimes only; V11 fallback and old DLLs are never pushed). PrismaUI
@@ -82,6 +86,24 @@
  * engine-natural re-wrap of visible text per mousemove built a multi-
  * second event backlog; the mouseup settle re-anchors against true
  * geometry. */
+/* Body search (2026-10-17 feature): debounced (~200 ms) case-insensitive
+ * substring scan over "speaker: text" across the whole dhAllLines model
+ * (never the DOM). While a term is active: the quest index narrows to
+ * quests with >=1 match (AND with the bucket checkboxes and the quest-name
+ * box; "No matching quests." placeholder when nothing matches); matching
+ * log rows highlight .dh-hit spans (.dh-hit-current on the cursor line),
+ * built by text-node splitting in dhMakeRow so C17 remounts re-apply them
+ * for free; committing jumps to the most recent match (block-layout
+ * arithmetic, scrollTop written last); Enter=older / Shift+Enter=newer
+ * walk the matches with wrap and a "n of m" readout numbered FROM the
+ * most recent match ("1 of m" on commit). appendLine grows the match set
+ * incrementally without a re-jump; setHistory clears the term. Empty term
+ * = every extension inert (idle paths byte-identical). Chunk B wires the
+ * chrome around this core: #dialoguebar markup (index.html) with
+ * #bodysearchcount / ‹ › buttons / #bodysearch, the DOMContentLoaded
+ * input + button wiring, the bodysearch focus zone (dhFocusZoneOrder),
+ * the Esc clear-first chain, and the LB/RB controller overload
+ * (dhBodySearchPageOrMatch). No C++, no INI, no persistence. */
 "use strict";
 
 function dhParse(value, fallback) {
@@ -421,9 +443,12 @@ function dhMakeEntry(key, label, count, type) {
 /* Left pane: "All" plus the quest buckets, filtered by the search box on
  * label substring (case-insensitive) and by the C7 bucket checkboxes — an
  * entry hides while its bucket (its newest line's bucket) is unchecked; the
- * "All" entry is never hidden by a checkbox. Selection is not reset by a
- * search or a filter — the right pane keeps showing the selected bucket
- * while its entry is filtered out, and restoring the filter brings it back. */
+ * "All" entry is never hidden by a checkbox. Body search: while a term is
+ * active the list narrows further to quests with >=1 matching line (AND
+ * with both filters above), and an empty result shows a "No matching
+ * quests." placeholder. Selection is not reset by a search or a filter —
+ * the right pane keeps showing the selected bucket while its entry is
+ * filtered out, and restoring the filter brings it back. */
 function dhRenderIndex() {
   const list = document.getElementById("quests");
   if (!list) {
@@ -435,24 +460,42 @@ function dhRenderIndex() {
     return term === "" || label.toLowerCase().indexOf(term) !== -1;
   };
 
+  /* Body search (AC1): inactive = the original behavior, byte for byte. */
+  const bsActive = dhBodySearch.term !== "";
+  const bsQuestHits = dhBodySearch.questMatchIds;
+
   list.textContent = "";
-  if (matches("All")) {
+  let shown = 0;
+  if (matches("All") && (!bsActive || bsQuestHits.size > 0)) {
     list.append(dhMakeEntry("all", "All", dhAllLines.length));
+    shown++;
   }
   for (const entry of dhBuildIndex()) {
     if (!dhBucketVisible(dhBucketFor(entry.type))) {
       continue;
     }
     const label = entry.questId === 0 ? "Unattributed" : dhQuestLabel(entry);
-    if (matches(label)) {
+    if (matches(label) && (!bsActive || bsQuestHits.has(entry.questId))) {
       list.append(dhMakeEntry(entry.key, label, entry.count, entry.type));
+      shown++;
     }
+  }
+  if (shown === 0 && bsActive) {
+    const row = document.createElement("div");
+    row.className = "qentry qempty";
+    row.textContent = "No matching quests.";
+    list.append(row);
   }
 }
 
 /* Build one log row for a model line: speaker span (per-NPC color on npc
  * kinds), text span, dataset fields — the exact markup the CSS expects.
- * Pure construction, no DOM insertion or scrolling; callers own both. */
+ * Pure construction, no DOM insertion or scrolling; callers own both.
+ * Body search (AC2): while a term is active and the line matches, both
+ * spans are built by text-node splitting (never innerHTML) with the
+ * matched substrings wrapped in .dh-hit spans — .dh-hit-current on the
+ * cursor line. Derived at row build, so C17 remounts re-apply highlights
+ * for free. */
 function dhMakeRow(line) {
   const row = document.createElement("div");
   row.className = "line " + line.kind;
@@ -460,13 +503,27 @@ function dhMakeRow(line) {
   row.dataset.questName = line.questName;
   const speaker = document.createElement("span");
   speaker.className = "speaker";
-  speaker.textContent = line.speaker + ":";
+  const text = document.createElement("span");
+  text.className = "text";
+  const hitRanges = dhBodySearch.term === ""
+    ? []
+    : dhBodySearchRangesFor(line, dhBodySearch.term);
+  if (hitRanges.length === 0) {
+    speaker.textContent = line.speaker + ":";
+    text.textContent = " " + line.text;
+  } else {
+    const hitCls = dhAllLines[dhBodySearch.matches[dhBodySearch.cursor]] === line
+      ? "dh-hit-current"
+      : "dh-hit";
+    const speakerText = line.speaker + ":";
+    dhAppendHighlighted(speaker, speakerText, hitRanges, 0, speakerText.length, hitCls);
+    const textText = " " + line.text;
+    dhAppendHighlighted(text, textText, hitRanges,
+      speakerText.length, speakerText.length + textText.length, hitCls);
+  }
   if (line.kind === "npc") {
     speaker.style.color = dhNameColor(String(line.speaker));
   }
-  const text = document.createElement("span");
-  text.className = "text";
-  text.textContent = " " + line.text;
   row.append(speaker, text);
   return row;
 }
@@ -808,6 +865,338 @@ function dhCheckLogWidth() {
   }
 }
 
+/* ------ Body search (full-text search over the dialogue log) -------------
+ * Design authority: .flybywire/active/2026-10-17_DesignSpec_BodySearch/
+ * DESIGN_SPEC.md (D1-D11 settled). Debounced (~200 ms) case-insensitive
+ * substring scan over "speaker: text" across the whole dhAllLines model —
+ * never the DOM. While a term is active: the quest index narrows to quests
+ * with >=1 match (AC1, AND with bucket checkboxes + quest-name box), all
+ * matching rows highlight .dh-hit spans with .dh-hit-current on the cursor
+ * line (AC2), committing jumps to the most recent match (AC3), and
+ * prev/next walk the matches with wrap (AC4). appendLine grows the match
+ * set incrementally without a re-jump (AC8); setHistory clears the term.
+ * Empty/whitespace term = Idle: every extension here is inert and the idle
+ * paths stay byte-identical (AC9). Perf KB binding: commit/step perform
+ * exactly ONE layout read (the viewport height) BEFORE any DOM write, and
+ * scroll jumps are pure dhBlockLayout() arithmetic with the scrollTop
+ * write LAST. */
+
+const kBodySearchDebounceMs = 200;
+
+/* Committed search state (singleton). matches holds indices into
+ * dhAllLines in ascending order (line granularity — a line appears at most
+ * once); cursor is the current position into matches. The count readout
+ * numbers FROM the most recent match, so a fresh commit lands on "1 of m"
+ * (AC3) and walking older counts up. */
+const dhBodySearch = {
+  term: "",
+  matches: [],
+  cursor: 0,
+  questMatchIds: new Set(),
+  timer: null
+};
+let dhBodySearchInput = null;  // element handed to dhBodySearchWireInput (Chunk B markup)
+
+/* Case-insensitive substring ranges of term in the line's search haystack
+ * ("speaker: text"), as [start, end) haystack offsets, ascending and
+ * non-overlapping (a fresh search starts where the previous hit ended, so
+ * "aa" in "aaa" is one hit — the highlight walker requires ordered,
+ * non-overlapping ranges). */
+function dhBodySearchRangesFor(line, term) {
+  const ranges = [];
+  if (term === "") {
+    return ranges;
+  }
+  const haystack = (line.speaker + ": " + line.text).toLowerCase();
+  let from = 0;
+  let at = haystack.indexOf(term, from);
+  while (at !== -1) {
+    ranges.push([at, at + term.length]);
+    from = at + term.length;
+    at = haystack.indexOf(term, from);
+  }
+  return ranges;
+}
+
+/* Append spanText — the slice of the search haystack bounded by
+ * [spanStart, spanEnd) in haystack coordinates — to target, wrapping the
+ * parts covered by hitRanges in <span class="cls">. Text-node splitting
+ * only (never innerHTML); a range spanning the "speaker: " boundary is
+ * clipped to whichever span(s) it touches, so the rendered text always
+ * equals the unsearched row exactly. */
+function dhAppendHighlighted(target, spanText, hitRanges, spanStart, spanEnd, cls) {
+  let pos = spanStart;
+  for (let i = 0; i < hitRanges.length; i++) {
+    const s = Math.max(hitRanges[i][0], spanStart);
+    const e = Math.min(hitRanges[i][1], spanEnd);
+    if (s >= e) {
+      continue;
+    }
+    if (s > pos) {
+      target.append(document.createTextNode(spanText.slice(pos - spanStart, s - spanStart)));
+    }
+    const hit = document.createElement("span");
+    hit.className = cls;
+    hit.textContent = spanText.slice(s - spanStart, e - spanStart);
+    target.append(hit);
+    pos = e;
+  }
+  if (pos < spanEnd) {
+    target.append(document.createTextNode(spanText.slice(pos - spanStart)));
+  }
+}
+
+/* Rebuild every mounted block's rows through dhMakeRow — the C17 remount
+ * path, driven manually. Used after commit/cursor moves/clear so
+ * already-mounted rows pick up fresh .dh-hit / .dh-hit-current state
+ * without waiting for a scroll. Content is identical, so block heights and
+ * spacers are untouched; no layout reads anywhere (writes only). */
+function dhBodySearchRefreshMountedRows() {
+  for (const pair of dhMounted) {
+    const b = pair[0];
+    const block = pair[1];
+    block.textContent = "";
+    const start = b * kBlockRows;
+    const end = Math.min(start + kBlockRows, dhViewLines.length);
+    const fragment = document.createDocumentFragment();
+    for (let i = start; i < end; i++) {
+      fragment.append(dhMakeRow(dhViewLines[i]));
+    }
+    block.append(fragment);
+  }
+}
+
+/* The "[n of m]" readout: "" when idle, "0" when active with no matches,
+ * otherwise "n of m" with n numbered FROM the most recent match (AC3: a
+ * fresh commit lands on the most recent match and reads "1 of m"; walking
+ * older counts up). */
+function dhBodySearchCountText() {
+  if (dhBodySearch.term === "") {
+    return "";
+  }
+  const m = dhBodySearch.matches.length;
+  if (m === 0) {
+    return "0";
+  }
+  return (m - dhBodySearch.cursor) + " of " + m;
+}
+
+/* Refresh the "[n of m]" readout when the bar exists. The count span id
+ * (#bodysearchcount) is Chunk B markup — an absent element is inert, so
+ * old html never breaks. */
+function dhBodySearchUpdateCount() {
+  const el = document.getElementById("bodysearchcount");
+  if (el) {
+    el.textContent = dhBodySearchCountText();
+  }
+}
+
+/* Jump the log so the given match (a dhAllLines index) sits at the top of
+ * the viewport: the target offset is pure dhBlockLayout() arithmetic
+ * (block prefix offset + row-in-block x per-row estimate), clamped against
+ * the simulated total, and scrollTop is written LAST. When the target's
+ * line is filtered out of the current view, the cursor instead adopts the
+ * nearest visible match (walking outward from the cursor; older wins
+ * ties — spec §5.4: visibility is a render concern, the count stays
+ * global) and the mounted rows + readout refresh to match. */
+function dhBodySearchJump(matchIdx, viewH) {
+  const log = document.getElementById("log");
+  if (!log || dhBodySearch.term === "" || dhBodySearch.matches.length === 0) {
+    return;
+  }
+  const target = dhAllLines[matchIdx];
+  let viewPos = -1;
+  for (let i = 0; i < dhViewLines.length; i++) {
+    if (dhViewLines[i] === target) {
+      viewPos = i;
+      break;
+    }
+  }
+  if (viewPos < 0) {
+    const inView = new Set(dhViewLines);
+    const m = dhBodySearch.matches;
+    let best = -1;
+    for (let off = 0; off < m.length && best < 0; off++) {
+      const lo = dhBodySearch.cursor - off;
+      const hi = dhBodySearch.cursor + off;
+      if (lo >= 0 && inView.has(dhAllLines[m[lo]])) {
+        best = lo;
+      } else if (hi < m.length && inView.has(dhAllLines[m[hi]])) {
+        best = hi;
+      }
+    }
+    if (best < 0) {
+      return;  // no visible match at all — no scroll change
+    }
+    dhBodySearch.cursor = best;
+    for (let i = 0; i < dhViewLines.length; i++) {
+      if (dhViewLines[i] === dhAllLines[m[best]]) {
+        viewPos = i;
+        break;
+      }
+    }
+    if (viewPos < 0) {
+      return;  // defensive only — inView already proved membership
+    }
+    dhBodySearchRefreshMountedRows();
+    dhBodySearchUpdateCount();
+  }
+  if (viewH === undefined) {
+    viewH = log.clientHeight;  // standalone call: the read stays before the write
+  }
+  const layout = dhBlockLayout();
+  const block = Math.floor(viewPos / kBlockRows);
+  const rowInBlock = viewPos - block * kBlockRows;
+  const targetPx = layout.offsets[block] + rowInBlock * (layout.est / kBlockRows);
+  const max = Math.max(0, layout.total - viewH);
+  log.scrollTop = Math.min(max, Math.max(0, targetPx));  // write LAST
+}
+
+/* Cursor move with wrap: dir < 0 = previous/older, dir > 0 = next/newer
+ * (AC4). Inert when idle or when there are no matches (§5.2). One layout
+ * read (the viewport height) before any write; highlights and the readout
+ * refresh, then the jump writes scrollTop last. */
+function dhBodySearchStep(dir) {
+  const m = dhBodySearch.matches;
+  if (dhBodySearch.term === "" || m.length === 0) {
+    return;
+  }
+  const log = document.getElementById("log");
+  if (!log) {
+    return;
+  }
+  const viewH = log.clientHeight;  // read first
+  dhBodySearch.cursor = (dhBodySearch.cursor + (dir < 0 ? -1 : 1) + m.length) % m.length;
+  dhBodySearchRefreshMountedRows();
+  dhBodySearchUpdateCount();
+  dhBodySearchJump(m[dhBodySearch.cursor], viewH);
+}
+
+function dhBodySearchPrev() {  // Enter — previous (older) match
+  dhBodySearchStep(-1);
+}
+
+function dhBodySearchNext() {  // Shift+Enter — next (newer) match
+  dhBodySearchStep(1);
+}
+
+/* Controller context overload (AC6): while a body-search term is active,
+ * the LB/RB actions (page_up/page_down) walk the matches — prev = older,
+ * next = newer — instead of paging; a cleared term restores the page
+ * scroll. Term active with zero matches: the walk is inert (§5.2). */
+function dhBodySearchPageOrMatch(dir) {
+  if (dhBodySearch.term !== "") {
+    if (dir < 0) {
+      dhBodySearchPrev();
+    } else {
+      dhBodySearchNext();
+    }
+  } else {
+    dhFocusPageScroll(dir < 0 ? -1 : 1);
+  }
+}
+
+/* Commit a search term (the debounced "input" endpoint). Rescans the
+ * model, rebuilds the match state, targets the most recent match, and
+ * re-renders: quest index, mounted-row highlights, count readout, then
+ * the auto-jump. Unchanged term = no-op (never re-jumps); empty/whitespace
+ * term = the full reset to Idle. Reads exactly one layout value (the
+ * viewport height) BEFORE any DOM write; scrollTop is written last. */
+function dhBodySearchCommit(raw) {
+  const log = document.getElementById("log");
+  const viewH = log ? log.clientHeight : 0;  // the only layout read — first
+  const term = (typeof raw === "string" ? raw : "").toLowerCase().trim();
+  if (term === dhBodySearch.term) {
+    return;
+  }
+  dhBodySearch.term = term;
+  dhBodySearch.matches = [];
+  dhBodySearch.cursor = 0;
+  dhBodySearch.questMatchIds.clear();
+  if (term !== "") {
+    for (let i = 0; i < dhAllLines.length; i++) {
+      const line = dhAllLines[i];
+      if (dhBodySearchRangesFor(line, term).length > 0) {
+        dhBodySearch.matches.push(i);
+        dhBodySearch.questMatchIds.add(line.questId);
+      }
+    }
+    if (dhBodySearch.matches.length > 0) {
+      dhBodySearch.cursor = dhBodySearch.matches.length - 1;  // most recent
+    }
+  }
+  // DOM writes only from here on — no layout reads below this line.
+  dhRenderIndex();
+  dhBodySearchRefreshMountedRows();
+  dhBodySearchUpdateCount();
+  if (dhBodySearch.matches.length > 0) {
+    dhBodySearchJump(dhBodySearch.matches[dhBodySearch.cursor], viewH);
+  }
+}
+
+/* Full reset to Idle: setHistory, the empty-term commit, and Esc-clear
+ * (Chunk B) all land here. Cancels a pending debounce, clears the state
+ * and the wired input, and refreshes the readout. Mounted-row highlights
+ * clean up through the next row build — setHistory re-renders the log
+ * right after; the empty-commit path refreshes them explicitly. */
+function dhBodySearchClear() {
+  if (typeof clearTimeout === "function" && dhBodySearch.timer !== null) {
+    clearTimeout(dhBodySearch.timer);
+  }
+  dhBodySearch.timer = null;
+  dhBodySearch.term = "";
+  dhBodySearch.matches = [];
+  dhBodySearch.cursor = 0;
+  dhBodySearch.questMatchIds.clear();
+  if (dhBodySearchInput) {
+    dhBodySearchInput.value = "";
+  }
+  dhBodySearchUpdateCount();
+}
+
+/* Wire a body-search input element (Chunk B's #bodysearch): debounced
+ * "input" commits and Enter/Shift+Enter match walking. Enter = previous
+ * (older), Shift+Enter = next (newer); both inert when the term is empty
+ * or there are no matches. Timer calls are guarded so timerless hosts
+ * (the c6/c7/c8 harness sandboxes) commit synchronously instead of
+ * throwing. */
+function dhBodySearchWireInput(el) {
+  if (!el || typeof el.addEventListener !== "function") {
+    return;
+  }
+  dhBodySearchInput = el;
+  el.addEventListener("input", function () {
+    if (typeof clearTimeout === "function" && dhBodySearch.timer !== null) {
+      clearTimeout(dhBodySearch.timer);
+      dhBodySearch.timer = null;
+    }
+    if (typeof setTimeout !== "function") {
+      dhBodySearchCommit(el.value);
+      return;
+    }
+    dhBodySearch.timer = setTimeout(function () {
+      dhBodySearch.timer = null;
+      dhBodySearchCommit(el.value);
+    }, kBodySearchDebounceMs);
+  });
+  el.addEventListener("keydown", function (event) {
+    if (event.key !== "Enter" && event.keyCode !== 13) {
+      return;
+    }
+    if (dhBodySearch.term === "" || dhBodySearch.matches.length === 0) {
+      return;  // idle / no results — inert (§5.2)
+    }
+    if (typeof event.preventDefault === "function") {
+      event.preventDefault();
+    }
+    if (event.shiftKey) {
+      dhBodySearchNext();
+    } else {
+      dhBodySearchPrev();
+    }
+  });
+}
+
 /* M5 — movable/resizable panel (geometry persistence is the plugin's job:
  * JS reports the final rect ONCE per drag end via geometryChanged; the plugin
  * pushes setGeometry back when the panel opens). Clamping is duplicated on
@@ -1117,6 +1506,7 @@ function setHistory(lines) {
   if (search) {
     search.value = "";
   }
+  dhBodySearchClear();  // body search resets with the snapshot (spec §4.4)
   dhApplyFilterState(dhFilterState
     || { main: true, side: true, misc: true, unattributed: true });
   for (const raw of lines) {
@@ -1158,6 +1548,17 @@ function appendLine(line) {
     return;
   }
   dhAllLines.push(line);
+  // Body search (AC8): grow the match set incrementally while a term is
+  // active — the new line is the newest, so appending keeps matches
+  // ascending. Count refresh only, NEVER a re-jump (the user may be
+  // reading). The dhRenderIndex below re-narrows the quest index.
+  if (dhBodySearch.term !== "") {
+    if (dhBodySearchRangesFor(line, dhBodySearch.term).length > 0) {
+      dhBodySearch.matches.push(dhAllLines.length - 1);
+      dhBodySearch.questMatchIds.add(line.questId);
+    }
+    dhBodySearchUpdateCount();
+  }
   dhRenderIndex();  // cheap (bounded by the buffer size): recount + resort
   // C7: mirror the view predicate — never append a hidden-bucket line
   // into the "All" view; a selected quest's view stays unaffected.
@@ -1343,9 +1744,9 @@ function dhOnControllerAction(event) {
   const action = detail.action;
   if (detail.state === "repeat") {
     if (action === "page_up") {
-      dhFocusPageScroll(-1);
+      dhBodySearchPageOrMatch(-1);  // AC6: match walk while a term is active
     } else if (action === "page_down") {
-      dhFocusPageScroll(1);
+      dhBodySearchPageOrMatch(1);
     }
     return;
   }
@@ -1363,9 +1764,9 @@ function dhOnControllerAction(event) {
     }
     dhShowClearOverlay("all");
   } else if (action === "page_up") {
-    dhFocusPageScroll(-1);
+    dhBodySearchPageOrMatch(-1);  // AC6: match walk while a term is active
   } else if (action === "page_down") {
-    dhFocusPageScroll(1);
+    dhBodySearchPageOrMatch(1);
   } else if (action === "jump_oldest") {
     dhFocusJumpLog(false);
   } else if (action === "jump_newest") {
@@ -1383,11 +1784,13 @@ function dhOnControllerAction(event) {
  * controller conversion (D-pad -> arrows, A -> Enter, B -> Escape) rides
  * the same keydown events, so this model is the whole in-menu navigation
  * layer for keyboard and controller alike. Zones cycle in the contract
- * order (D2): search -> filters -> quests -> log -> clear, Left/Right =
+ * order (D2, body search added per spec §6.1): search -> filters -> quests
+ * -> bodysearch -> log -> clear, Left/Right =
  * prev/next with cyclic wrap; Up/Down move within a zone and, at zone
  * edges (the log consumes Up/Down for scrolling — D4), move between
  * zones. Focus is tracked in JS state — the real DOM focus only ever
- * lands on #search (so typing works); every other zone resolves its
+ * lands on the two text boxes (#search, #bodysearch — so typing works);
+ * every other zone resolves its
  * target element from state on demand, so index re-renders can rebuild
  * rows without stale-element bookkeeping. The visible indicator is the
  * .dh-focus class (history.css) — deliberately NOT .qentry.active, which
@@ -1399,16 +1802,39 @@ function dhOnControllerAction(event) {
  * C7 surface (INTEGRATION_CONTRACT): dhFocusCycleZone, dhFocusMove,
  * dhFocusActivate, dhFocusPageScroll, dhFocusJumpLog. */
 
-const dhFocusZoneOrder = ["search", "filters", "quests", "log", "clear"];
+/* Zone order (D2, extended by body search spec §6.1): the bodysearch zone
+ * sits between quests and log — the box lives in #dialoguebar above the
+ * log pane. */
+const dhFocusZoneOrder = ["search", "filters", "quests", "bodysearch", "log", "clear"];
 
 /* Per-zone position: filters = checkbox index (dhBuckets order), quests =
  * visible row index; roving — a zone remembers its position across
- * visits, clamped to what is currently rendered. */
+ * visits, clamped to what is currently rendered. bodysearch is a
+ * single-position zone (like search/clear) and needs no roving slot. */
 const dhFocusPos = { search: 0, filters: 0, quests: 0, log: 0, clear: 0 };
 let dhFocusZone = "log";
 let dhFocusPrev = null;    // D6: zone saved while the overlay traps focus
 let dhFocusOverlay = -1;   // D6: trap position (0 = confirm, 1 = cancel)
 let dhFocusMarked = [];    // elements currently carrying .dh-focus
+
+/* Quest rows eligible for roving focus: the body-search "No matching
+ * quests." placeholder (.qentry.qempty — no data.key) is skipped (I6), so
+ * the placeholder can never hold a roving slot and positions always mean
+ * real entries. Shared by dhFocusTarget, dhFocusMove and the click sync
+ * so they can never disagree about the indexing. */
+function dhQuestRowElements() {
+  const list = document.getElementById("quests");
+  if (!list) {
+    return [];
+  }
+  const rows = [];
+  for (let i = 0; i < list.children.length; i++) {
+    if (list.children[i].dataset.key) {
+      rows.push(list.children[i]);
+    }
+  }
+  return rows;
+}
 
 /* Resolve the current zone's target element from state (never cached
  * across renders): dhRenderIndex rebuilds the rows, so the quests target
@@ -1425,17 +1851,16 @@ function dhFocusTarget() {
     return document.getElementById("ftype-" + dhBuckets[dhFocusPos.filters]);
   }
   if (dhFocusZone === "quests") {
-    const list = document.getElementById("quests");
-    if (!list) {
-      return null;
-    }
-    const rows = list.children;
+    const rows = dhQuestRowElements();
     if (rows.length === 0) {
       return null;
     }
     const i = Math.min(dhFocusPos.quests, rows.length - 1);
     dhFocusPos.quests = i;  // adopt the clamp so later moves start here
     return rows[i];
+  }
+  if (dhFocusZone === "bodysearch") {
+    return document.getElementById("bodysearch");
   }
   if (dhFocusZone === "log") {
     return document.getElementById("log");
@@ -1445,9 +1870,9 @@ function dhFocusTarget() {
 
 /* Move the visible indicator to whatever dhFocusTarget resolves: strip
  * the class from the previous marks (detached rows are harmless no-ops)
- * and add it to the new target. Real DOM focus only accompanies the
- * search zone — leaving it blurs, so typed text can't land in the box
- * while another zone owns the model. */
+ * and add it to the new target. Real DOM focus only accompanies the two
+ * text zones (#search, #bodysearch — so typing works); leaving one blurs,
+ * so typed text can't land in a box while another zone owns the model. */
 function dhFocusApply() {
   for (const el of dhFocusMarked) {
     el.classList.remove("dh-focus");
@@ -1459,10 +1884,11 @@ function dhFocusApply() {
     dhFocusMarked.push(el);
   }
   const active = document.activeElement;
-  if (active && active.id === "search" && (!el || el.id !== "search")) {
+  const textBox = active && (active.id === "search" || active.id === "bodysearch");
+  if (textBox && (!el || el !== active)) {
     active.blur();
   }
-  if (el && el.id === "search" && dhFocusOverlay < 0
+  if (el && (el.id === "search" || el.id === "bodysearch") && dhFocusOverlay < 0
       && typeof el.focus === "function") {
     el.focus();
   }
@@ -1618,8 +2044,8 @@ function dhFocusMove(dir) {
     return true;
   }
   if (dhFocusZone === "quests") {
-    const list = document.getElementById("quests");
-    const count = list ? list.children.length : 0;
+    const rows = dhQuestRowElements();
+    const count = rows.length;
     if (count === 0) {
       return false;
     }
@@ -1628,7 +2054,7 @@ function dhFocusMove(dir) {
       return false;  // zone edge — Up/Down move between zones
     }
     dhFocusPos.quests = next;
-    dhFocusRevealRow(list.children[next]);  // reads+write BEFORE the class write
+    dhFocusRevealRow(rows[next]);  // reads+write BEFORE the class write
     dhFocusApply();
     return true;
   }
@@ -1636,7 +2062,7 @@ function dhFocusMove(dir) {
     dhLogScrollLines(dir < 0 ? -1 : 1);  // D4: always scroll, never cycle
     return true;
   }
-  return false;  // search / filters / clear: no vertical within — edges fall through
+  return false;  // search / bodysearch / filters / clear: no vertical within — edges fall through
 }
 
 /* C7 surface — Enter/Space activation. Every path delegates to the
@@ -1676,6 +2102,9 @@ function dhFocusActivate() {
     }
     return false;
   }
+  if (dhFocusZone === "bodysearch") {
+    return true;  // Enter/Space are owned by the input's own handlers (I7)
+  }
   if (dhFocusZone === "log") {
     return false;  // nothing to activate
   }
@@ -1702,8 +2131,9 @@ function dhFocusOnKey(event) {
   if (!(up || down || left || right || enter || space || pageUp || pageDown)) {
     return false;
   }
-  if (space && event.target && event.target.id === "search") {
-    return false;  // a typed character while the box owns the real focus
+  if (space && event.target
+      && (event.target.id === "search" || event.target.id === "bodysearch")) {
+    return false;  // a typed character while a text box owns the real focus
   }
   if (dhFocusOverlay >= 0) {
     if (up || down || left || right) {
@@ -1719,7 +2149,7 @@ function dhFocusOnKey(event) {
     return true;
   }
   if (left || right) {
-    if (dhFocusZone === "search") {
+    if (dhFocusZone === "search" || dhFocusZone === "bodysearch") {
       return true;  // D3: caret keys — no preventDefault, default caret move
     }
     event.preventDefault();
@@ -1737,12 +2167,20 @@ function dhFocusOnKey(event) {
       dhFocusSetZone("filters");  // D3: the adjacent zone, both directions
       return true;
     }
+    if (dhFocusZone === "bodysearch") {
+      dhFocusSetZone("log");  // spec §6.1: Up/Down leave the box for the log
+      return true;
+    }
     if (!dhFocusMove(dir)) {
       dhFocusCycleZone(dir);  // zone edge / single-position zone
     }
     return true;
   }
   if (enter) {
+    if (dhFocusZone === "bodysearch" && event.target
+        && event.target.id === "bodysearch") {
+      return true;  // I7: the input's own keydown handler already navigates
+    }                // — activating here too would move TWICE per Enter
     event.preventDefault();
     dhFocusActivate();
     return true;
@@ -1791,6 +2229,11 @@ function dhFocusSyncFromClick(event) {
       dhFocusApply();
       return;
     }
+    if (id === "bodysearch") {
+      dhFocusZone = "bodysearch";
+      dhFocusApply();
+      return;
+    }
     if (id && id.indexOf("ftype-") === 0) {
       dhFocusZone = "filters";
       const b = dhBuckets.indexOf(id.slice(6));
@@ -1806,8 +2249,7 @@ function dhFocusSyncFromClick(event) {
       return;
     }
     if (node.classList && node.classList.contains("qentry")) {
-      const list = document.getElementById("quests");
-      const rows = list ? list.children : [];
+      const rows = dhQuestRowElements();  // placeholder rows never sync (I6)
       for (let i = 0; i < rows.length; i++) {
         if (rows[i] === node) {
           dhFocusZone = "quests";
@@ -1904,6 +2346,22 @@ document.addEventListener("DOMContentLoaded", () => {
   if (search) {
     search.addEventListener("input", dhRenderIndex);
   }
+  /* Body search bar (Chunk B): the input carries the debounced commit +
+   * Enter/Shift+Enter navigation via dhBodySearchWireInput; the ‹ ›
+   * buttons walk matches for the mouse. Every lookup is guarded — old
+   * html without the bar stays inert. */
+  const bodySearch = document.getElementById("bodysearch");
+  if (bodySearch) {
+    dhBodySearchWireInput(bodySearch);
+  }
+  const bodySearchPrev = document.getElementById("bodysearchprev");
+  if (bodySearchPrev) {
+    bodySearchPrev.addEventListener("click", dhBodySearchPrev);  // ‹ = older
+  }
+  const bodySearchNext = document.getElementById("bodysearchnext");
+  if (bodySearchNext) {
+    bodySearchNext.addEventListener("click", dhBodySearchNext);  // › = newer
+  }
   for (const bucket of dhBuckets) {
     const box = document.getElementById("ftype-" + bucket);
     if (box) {
@@ -1953,6 +2411,19 @@ document.addEventListener("DOMContentLoaded", () => {
     if (event.key === "Escape" || event.keyCode === 27) {
       if (dhOverlayVisible()) {
         dhHideClearOverlay();  // dismiss only; the panel stays open
+        return;
+      }
+      // Esc chain (AC5, invariant 6): a focused NON-EMPTY search box
+      // clears FIRST and the panel stays open; the second Esc (box now
+      // empty) falls through to close. Overlay dismiss stays above both.
+      const target = event.target;
+      if (target && target.id === "bodysearch" && target.value) {
+        dhBodySearchClear();  // clears term + box + count; LB/RB revert
+        return;
+      }
+      if (target && target.id === "search" && target.value) {
+        target.value = "";  // symmetric clear for the quest-name box
+        dhRenderIndex();
         return;
       }
       dhSend("closeRequested");

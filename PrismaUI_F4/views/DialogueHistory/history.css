@@ -178,6 +178,18 @@ html, body {
   color: #D7FFD7;
 }
 
+/* Body search (AC1): the "No matching quests." placeholder — a plain row
+ * (no data.key in history.js), never clickable, so it takes no hover
+ * backing the way selectable entries do. */
+.qentry.qempty {
+  cursor: default;
+  color: #4C8A4C;
+  font-style: italic;
+}
+.qentry.qempty:hover {
+  background: transparent;
+}
+
 /* M8: word-wrap so long quest names stay fully readable. Click-to-select
  * is unaffected — the handler is on the .qentry row. */
 .qname {
@@ -211,6 +223,64 @@ html, body {
   display: flex;
   flex-direction: column;
   min-width: 0;
+}
+
+/* Body search bar (spec §6.2): fixed-height row atop the log pane — the
+ * right-aligned cluster [n of m] [‹] [›] [input]. Height matches the left
+ * pane's #search row (8px margin + box); static pane content for the C19
+ * drag freeze — no per-frame work. */
+#dialoguebar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  height: 37px;
+  padding: 0 10px;
+  user-select: none;
+}
+
+#bodysearchcount {
+  color: #4C8A4C;
+  font-size: 12px;
+  min-width: 7ch;  /* bounds cluster shift as the count text changes */
+  text-align: right;
+}
+
+/* ‹ › mirror the Enter convention: prev = older match, next = newer
+ * (the count numbers from the most recent match, so prev walks 1 -> 2). */
+#bodysearchprev,
+#bodysearchnext {
+  background: rgba(43, 91, 43, 0.25);
+  border: 1px solid #2B5B2B;
+  border-radius: 4px;
+  color: #7BFF7B;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1;
+  padding: 3px 9px;
+  cursor: pointer;
+}
+#bodysearchprev:hover,
+#bodysearchnext:hover {
+  background: rgba(43, 91, 43, 0.45);
+  border-color: #7BFF7B;
+  color: #D7FFD7;
+}
+
+#bodysearch {
+  width: 45%;  /* spec §6.2: ~40-50% of the pane */
+  padding: 4px 8px;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid #2B5B2B;
+  border-radius: 4px;
+  color: #D7FFD7;
+  font: inherit;
+  font-size: 14px;
+}
+#bodysearch:focus {
+  outline: none;
+  border-color: #7BFF7B;
 }
 
 #empty {
@@ -249,6 +319,21 @@ html, body {
 
 .line .speaker { color: #7BFF7B; font-weight: bold; }
 .line.player .speaker { color: #FFD866; }
+
+/* Body search highlights (AC2, spec §6.3): gold background, dark text —
+ * background only, no layout shift. The current match inverts to dark on
+ * gold plus weight, so it differs from a plain hit by more than hue
+ * (colorblind safety, spec §6.6). Built by text-node splitting in
+ * history.js dhMakeRow (never innerHTML). */
+.dh-hit {
+  background: #FFD866;
+  color: #0A120A;
+}
+.dh-hit-current {
+  background: #0A120A;
+  color: #FFD866;
+  font-weight: bold;
+}
 
 /* Clear history (C5): header button groups with the hint on the right.
  * stopPropagation on its mousedown (history.js) keeps the header's
@@ -373,6 +458,10 @@ html, body {
   outline-offset: -2px;
 }
 #search.dh-focus {
+  outline: none;
+  border-color: #7BFF7B;  /* same signal as :focus, model-driven */
+}
+#bodysearch.dh-focus {
   outline: none;
   border-color: #7BFF7B;  /* same signal as :focus, model-driven */
 }
