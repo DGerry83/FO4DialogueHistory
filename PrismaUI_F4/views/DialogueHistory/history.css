@@ -361,3 +361,27 @@ html, body {
   border-color: #7BFF7B;
   color: #D7FFD7;
 }
+
+/* C6 — roving focus indicator (keyboard/controller navigation, history.js
+ * focus model). Deliberately a separate class from .qentry.active (which
+ * means selection): an outline ring in the Pip-Boy green — outline takes
+ * no layout space, so focus moves never shift rows or force a reflow.
+ * Only #search needs the border treatment (its :focus style already
+ * hides the outline). */
+.dh-focus {
+  outline: 2px solid #7BFF7B;
+  outline-offset: -2px;
+}
+#search.dh-focus {
+  outline: none;
+  border-color: #7BFF7B;  /* same signal as :focus, model-driven */
+}
+.qentry.dh-focus {
+  background: rgba(43, 91, 43, 0.25);  /* hover-state backing */
+}
+#clear.dh-focus,
+.obtn.dh-focus {
+  background: rgba(43, 91, 43, 0.45);
+  border-color: #7BFF7B;
+  color: #D7FFD7;
+}

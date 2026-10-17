@@ -33,6 +33,11 @@ namespace F4DH::Infrastructure
 		void SetClearQuestsCallback(ClearQuestsCallback questsFn) override;
 		[[nodiscard]] bool IsHealthy() override;
 
+		// True only when the runtime exposed IVPrismaUI12 (controller-action
+		// binding); false on the V11 fallback. Hard gate for any V12-only
+		// call — C7 binds controller actions only when this is true.
+		[[nodiscard]] bool ControllerActionsAvailable() const;
+
 		// Configured base font size, pushed to the view ahead of each
 		// snapshot (C5 wiring; set once after the INI load).
 		void SetFontSize(int fontSize) noexcept;
@@ -63,8 +68,21 @@ namespace F4DH::Infrastructure
 		// PushSnapshot and OnDomReady (same first-open race as ApplyGeometry).
 		void ApplyFilters();
 
+		// C8: report the active input device via InteropCall setInputDevice so
+		// the view can tailor its hint chrome. Runs only when the runtime
+		// exposed V12 (IsUsingGamepad is a V9 virtual — safe through the V12
+		// pointer while ControllerActionsAvailable() guarantees a real V12
+		// object) and the view is healthy (IsHealthy, like every other push
+		// path — InteropCall before DOM ready is silently dropped). Called on
+		// the game thread from OnDomReady (after the C7 bindings) and Focus()
+		// (re-opens report the current device); device changes mid-session
+		// reach the view through PrismaUI's own 'prisma-input-device-change'
+		// window event instead.
+		void PushInputDeviceMode();
+
 	private:
-		PRISMA_UI_API::IVPrismaUI11*       _api = nullptr;  // resolved at construction; null = PrismaUI absent
+		PRISMA_UI_API::IVPrismaUI12*       _api = nullptr;  // resolved at construction; null = PrismaUI absent; on fallback holds the V11 pointer (downcast)
+		bool                               _controllerActionsAvailable{ false };  // true only when V12 was exposed; V12-only calls must check this first
 		PrismaView                         _view = 0;
 		CloseCallback                      _closeCallback = nullptr;
 		ClearAllCallback                   _clearAllCallback = nullptr;

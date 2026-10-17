@@ -39,6 +39,7 @@ add_library(${PROJECT_NAME} SHARED
 	src/Core/Geometry/PanelGeometry.cpp
 	src/Core/Settings/ViewFilterState.cpp
 	src/Core/Input/ScanCodeMap.cpp
+	src/Core/Input/GamepadButtonMap.cpp
 	src/Application/Capture/CapturePipeline.cpp
 	src/Application/View/ViewController.cpp
 	src/Application/Input/HotkeyController.cpp

@@ -17,6 +17,11 @@ namespace F4DH::Application
 			// Called by the F4SE input event sink for each key-down event.
 			void OnKeyDown(std::uint32_t scanCode);
 
+			// Called by the input sink when the configured gamepad binding
+			// matches (the sink already resolved the binding — no code
+			// argument). Same toggle path as OnKeyDown's hotkey branch.
+			void OnGamepadButton();
+
 		private:
 			const Settings&     _settings;
 			ViewController&     _viewController;

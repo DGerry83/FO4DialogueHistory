@@ -19,4 +19,9 @@ namespace F4DH::Application
 			_stressTestInjector.InjectBatch();
 		}
 	}
+
+	void HotkeyController::OnGamepadButton()
+	{
+		_viewController.Toggle();
+	}
 }

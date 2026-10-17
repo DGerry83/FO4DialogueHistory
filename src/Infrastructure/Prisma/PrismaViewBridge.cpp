@@ -28,9 +28,13 @@ namespace F4DH::Infrastructure
 		constexpr auto kViewPath{ "DialogueHistory/index.html" };
 
 		// The bridge is a composition-owned singleton. These mirrors let the
-		// plain-function callbacks reach it without header changes.
+		// plain-function callbacks reach it without header changes. Typed as
+		// IVPrismaUI12 (the C5 member's type) so OnDomReady can reach the V12
+		// controller-action virtuals; on the V11 fallback this holds the
+		// downcast pointer — V12 virtuals must stay gated on
+		// ControllerActionsAvailable() (calling them on the fallback is UB).
 		PrismaViewBridge*                g_bridge{ nullptr };
-		PRISMA_UI_API::IVPrismaUI11*     g_api{ nullptr };
+		PRISMA_UI_API::IVPrismaUI12*     g_api{ nullptr };
 		PrismaViewBridge::CloseCallback  g_closeCallback{ nullptr };
 		PrismaViewBridge::ClearAllCallback   g_clearAllCallback{ nullptr };
 		PrismaViewBridge::ClearQuestCallback g_clearQuestCallback{ nullptr };
@@ -226,6 +230,38 @@ namespace F4DH::Infrastructure
 			g_api->RegisterJSListener(a_view, "clearAllRequested", &OnClearAllRequested);
 			g_api->RegisterJSListener(a_view, "clearQuestRequested", &OnClearQuestRequested);
 			g_api->RegisterJSListener(a_view, "clearQuestsRequested", &OnClearQuestsRequested);
+			// C7: V12 controller actions (gamepad). Bound only when the runtime
+			// exposed IVPrismaUI12 — on the V11 fallback g_api is a downcast and
+			// these virtuals must never run (ControllerActionsAvailable gates
+			// them). A/B/D-pad are deliberately NOT bound: they stay on the
+			// legacy synthetic-key route (D-pad -> arrows, A -> Enter, B ->
+			// Escape) that the C6 focus model consumes. LT/RT hysteresis is the
+			// framework's own (press >= 0.55, release <= 0.45).
+			if (g_bridge && g_bridge->ControllerActionsAvailable()) {
+				constexpr std::pair<const char*, const char*> kControllerActions[] = {
+					{ "X", "clear_quest" },
+					{ "Y", "clear_all" },
+					{ "LB", "page_up" },
+					{ "RB", "page_down" },
+					{ "LT", "jump_oldest" },
+					{ "RT", "jump_newest" },
+					{ "Start", "close" }
+				};
+				std::size_t bound = 0;
+				for (const auto& [button, action] : kControllerActions) {
+					if (g_api->BindControllerAction(a_view, button, action)) {
+						bound += 1;
+					} else {
+						REX::LogWarning("PrismaViewBridge: BindControllerAction failed ({} -> {})", button, action);
+					}
+				}
+				REX::LogInformation("PrismaViewBridge: controller actions bound ({})", bound);
+			}
+			// C8: report the active input device for the hint chrome (V12-only —
+			// PushInputDeviceMode re-checks ControllerActionsAvailable() itself).
+			if (g_bridge) {
+				g_bridge->PushInputDeviceMode();
+			}
 			g_api->SetViewRole(a_view, PRISMA_UI_API::ViewRole::kPanel);
 			g_api->SetViewOwnsEscape(a_view, true);
 			// Deterministic snapshot replay: the view's requestHistory can fire
@@ -247,8 +283,20 @@ namespace F4DH::Infrastructure
 	}
 
 	PrismaViewBridge::PrismaViewBridge() :
-		_api(PRISMA_UI_API::RequestPluginAPI<PRISMA_UI_API::IVPrismaUI11>())
+		_api(PRISMA_UI_API::RequestPluginAPI<PRISMA_UI_API::IVPrismaUI12>())
 	{
+		if (!_api) {
+			// V12 not exposed: fall back to V11 — identical V1–V11 surface,
+			// minus the controller actions (C7/C8 stay inert via the flag).
+			if (auto* v11 = PRISMA_UI_API::RequestPluginAPI<PRISMA_UI_API::IVPrismaUI11>()) {
+				_api = static_cast<PRISMA_UI_API::IVPrismaUI12*>(v11);
+				REX::LogWarning("PrismaViewBridge: controller actions disabled — PrismaUI V12 not exposed");
+			}
+			// Both absent: _api stays null; Create() logs the degraded-path error.
+		} else {
+			_controllerActionsAvailable = true;
+			REX::LogInformation("PrismaViewBridge: PrismaUI V12 acquired — controller actions available");
+		}
 		g_bridge = this;
 		g_api = _api;
 	}
@@ -341,6 +389,7 @@ namespace F4DH::Infrastructure
 			return;  // applied after Create() via OnDomReady
 		}
 		_api->Focus(_view, false);  // never pause the game
+		PushInputDeviceMode();  // C8: a re-open reports the current input device
 	}
 
 	void PrismaViewBridge::Unfocus()
@@ -478,6 +527,18 @@ namespace F4DH::Infrastructure
 		}
 	}
 
+	void PrismaViewBridge::PushInputDeviceMode()
+	{
+		// IsUsingGamepad is a V9 virtual: callable through the V12 pointer only
+		// while _controllerActionsAvailable guarantees a real V12 object — on
+		// the V11 fallback _api is a downcast and any V9+ virtual is UB.
+		if (_api && _controllerActionsAvailable && _view != 0 && IsHealthy()) {
+			const bool gamepad = _api->IsUsingGamepad();
+			_api->InteropCall(_view, "setInputDevice",
+				gamepad ? "{\"gamepad\":true}" : "{\"gamepad\":false}");
+		}
+	}
+
 	bool PrismaViewBridge::IsHealthy()
 	{
 		if (!_api || _view == 0) {
@@ -489,5 +550,10 @@ namespace F4DH::Infrastructure
 		const auto health = _api->GetViewHealth(_view);
 		return health == PRISMA_UI_API::ViewHealth::kLive ||
 		       health == PRISMA_UI_API::ViewHealth::kDomReady;
+	}
+
+	bool PrismaViewBridge::ControllerActionsAvailable() const
+	{
+		return _controllerActionsAvailable;
 	}
 }

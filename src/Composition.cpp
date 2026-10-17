@@ -10,6 +10,7 @@
 #include "Application/StressTest/StressTestInjector.h"
 #include "Application/View/ViewController.h"
 #include "Core/Dialogue/DialogueBuffer.h"
+#include "Core/Input/GamepadButtonMap.h"
 #include "Infrastructure/Cosave/CosaveStore.h"
 #include "Infrastructure/Hooks/SubtitleHook.h"
 #include "Infrastructure/Logging/Log.h"
@@ -101,6 +102,10 @@ namespace F4DH
 			std::uint32_t secondary;
 		};
 
+		// "No chord modifier" sentinel from Core::GamepadButtonMap (modifier
+		// holds 0xFF when the binding is a single button — 0 is DUp, valid).
+		constexpr std::uint8_t kNoGamepadModifier{ 0xFF };
+
 		// C11: OG 1.10.163 delivers Windows virtual-key codes in
 		// ButtonEvent.keyMask (empirically confirmed by the C10 diagnostic
 		// dumps — H arrived as 72/0x48); NG/AE deliver DirectInput scan codes.
@@ -136,26 +141,32 @@ namespace F4DH
 		{
 		public:
 			InputSink(Application::HotkeyController& hotkey, Core::ILogger& log, MatchPair a_match, std::uint32_t a_configuredScanCode,
-				MatchPair a_stressMatch = { 0, 0 }, std::uint32_t a_stressScanCode = 0, bool a_probe = false) :
+				MatchPair a_stressMatch = { 0, 0 }, std::uint32_t a_stressScanCode = 0, bool a_probe = false,
+				Core::GamepadHotkeyBinding a_gpBinding = {}) :
 				_hotkey(hotkey),
 				_log(log),
 				_match(a_match),
 				_configuredScanCode(a_configuredScanCode),
 				_stressMatch(a_stressMatch),
 				_stressScanCode(a_stressScanCode),
-				_probe(a_probe)
+				_probe(a_probe),
+				_gpBinding(a_gpBinding)
 			{}
 
 			// The dispatcher consults this before delivering; the base
 			// implementation returns false, which left this sink opted out of
 			// every event (C9 hotkey fix). Accept only what OnButtonEvent acts
-			// on — keyboard button events.
+			// on — keyboard button events, plus gamepad button events while
+			// the KeyProbe diagnostic is on (C1) or a gamepad hotkey binding
+			// is configured (C4).
 			bool ShouldHandleEvent(const RE::InputEvent* a_event) override
 			{
 				const bool accept = a_event &&
-					a_event->Is(RE::INPUT_EVENT_TYPE::kButton) &&
-					a_event->device == RE::INPUT_DEVICE::kKeyboard;
-				if (accept && !_loggedFirstEvent) {
+					((a_event->Is(RE::INPUT_EVENT_TYPE::kButton) &&
+						 a_event->device == RE::INPUT_DEVICE::kKeyboard) ||
+						((_probe || _gpBinding.enabled) && a_event->device == RE::INPUT_DEVICE::kGamepad &&
+							a_event->Is(RE::INPUT_EVENT_TYPE::kButton)));
+				if (accept && a_event->device == RE::INPUT_DEVICE::kKeyboard && !_loggedFirstEvent) {
 					_loggedFirstEvent = true;
 					_log.Info("input: first keyboard button event received");
 				}
@@ -165,6 +176,50 @@ namespace F4DH
 			void OnButtonEvent(const RE::ButtonEvent* a_event) override
 			{
 				if (!a_event) {
+					return;
+				}
+
+				// C1: KeyProbe gamepad probe — log one line per delivered
+				// gamepad button event (device-local idCode per the CHUNK_MAP
+				// table, analog value, hold time, press state). Never consumed,
+				// never matched against the keyboard hotkey/stress pairs.
+				if (a_event->device == RE::INPUT_DEVICE::kGamepad) {
+					if (_probe) {
+						const auto idCode = static_cast<std::uint32_t>(a_event->QIDCode());
+						const char* state = a_event->QJustPressed() ? "pressed" :
+							(a_event->QReleased() ? "released" : "held");
+						_log.Info(std::format("input probe: gamepad button idCode {} (0x{:X}) value {:.2f} held {:.2f}s state {}",
+							idCode, idCode, a_event->value, a_event->heldDownSecs, state));
+					}
+
+					// C4: gamepad hotkey routing — only when a binding is
+					// configured (ShouldHandleEvent already gated delivery).
+					// Edge-triggered like the keyboard path: the chord
+					// modifier is tracked with one POD bool from its
+					// press/release edges (release clears held even if the
+					// trigger never fired); the trigger fires on JustPressed
+					// only, and only while the modifier is held when a chord
+					// is configured. Never sets `handled` — vanilla bindings
+					// (VATS, favorites, ...) keep working.
+					if (_gpBinding.enabled) {
+						const auto idCode = static_cast<std::uint32_t>(a_event->QIDCode());
+						if (_gpBinding.modifier != kNoGamepadModifier && idCode == _gpBinding.modifier) {
+							_gpModifierHeld = a_event->QJustPressed() ? true :
+								(a_event->QReleased() ? false : _gpModifierHeld);
+							return;
+						}
+						if (idCode == _gpBinding.trigger && a_event->QJustPressed() &&
+							(_gpBinding.modifier == kNoGamepadModifier || _gpModifierHeld)) {
+							if (_gpBinding.modifier == kNoGamepadModifier) {
+								_log.Info(std::format("input: gamepad hotkey matched ({}), toggling panel",
+									Core::GamepadButtonName(_gpBinding.trigger)));
+							} else {
+								_log.Info(std::format("input: gamepad hotkey matched ({}+{}), toggling panel",
+									Core::GamepadButtonName(_gpBinding.modifier), Core::GamepadButtonName(_gpBinding.trigger)));
+							}
+							_hotkey.OnGamepadButton();
+						}
+					}
 					return;
 				}
 
@@ -211,6 +266,8 @@ namespace F4DH
 			MatchPair                      _stressMatch;         // DIK on NG/AE, VK on OG; primary 0 = disabled
 			std::uint32_t                  _stressScanCode;      // always DIK (INI value)
 			bool                           _probe{ false };      // [Diagnostics] KeyProbe
+			Core::GamepadHotkeyBinding     _gpBinding{};         // C4: parsed [Settings] GamepadHotkey; enabled=false = unconfigured
+			bool                           _gpModifierHeld{ false };  // C4: chord modifier held, tracked from press/release edges
 			bool                           _loggedFirstEvent{ false };
 		};
 	}
@@ -258,7 +315,22 @@ namespace F4DH
 		}
 		const auto                                 matchCode = ResolveHotkeyMatchCode(root.settings.hotkeyScanCode, root.log);
 		const auto                                 stressMatchCode = stressScanCode != 0 ? ResolveHotkeyMatchCode(stressScanCode, root.log) : MatchPair{ 0, 0 };
-		static InputSink                           inputSink(hotkey, root.log, matchCode, root.settings.hotkeyScanCode, stressMatchCode, stressScanCode, root.settings.keyProbe);
+
+		// C4: [Settings] GamepadHotkey (parsed by Core::ParseGamepadHotkey at
+		// INI load, C3). The sink matches the binding edge-for-edge; the
+		// controller just toggles. Disabled binding = zero-initialized POD,
+		// sink gamepad branch stays inert.
+		const auto& gpBinding = root.settings.gamepadHotkey;
+		if (gpBinding.enabled) {
+			if (gpBinding.modifier == kNoGamepadModifier) {
+				root.log.Info(std::format("input: gamepad hotkey bound: {}",
+					Core::GamepadButtonName(gpBinding.trigger)));
+			} else {
+				root.log.Info(std::format("input: gamepad hotkey bound: {}+{}",
+					Core::GamepadButtonName(gpBinding.modifier), Core::GamepadButtonName(gpBinding.trigger)));
+			}
+		}
+		static InputSink                           inputSink(hotkey, root.log, matchCode, root.settings.hotkeyScanCode, stressMatchCode, stressScanCode, root.settings.keyProbe, gpBinding);
 
 		bridge.SetFontSize(root.settings.fontSize);
 		bridge.SetGeometry(root.settings.panelGeometry);

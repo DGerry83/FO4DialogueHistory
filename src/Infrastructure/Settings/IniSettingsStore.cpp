@@ -1,6 +1,7 @@
 #include "IniSettingsStore.h"
 
 #include "Core/Input/ScanCodeMap.h"
+#include "Core/Input/GamepadButtonMap.h"
 
 #include <algorithm>
 #include <charconv>
@@ -18,7 +19,7 @@
 // Reads FO4DialogueHistory.ini from the folder that hosts this DLL
 // (Data/F4SE/Plugins under the game root — resolved via the module path so
 // non-standard Data locations still work). One-shot parse at kGameDataReady;
-// no file I/O anywhere else. Hand-rolled: seven keys, no dependency.
+// no file I/O anywhere else. Hand-rolled: nine keys, no dependency.
 //
 // M9: panel geometry lives in a SIBLING file (FO4DialogueHistory.geometry.ini)
 // that release packages never ship, so redeploying the mod folder can no
@@ -325,6 +326,17 @@ namespace F4DH::Infrastructure
 					}
 				} else {
 					REX::LogWarning("IniSettingsStore: invalid Hotkey '{}' — keeping default 35 (H)", value);
+				}
+			} else if (key == "gamepadhotkey") {
+				if (value.empty()) {
+					// Absent/empty = silently disabled (feature off by default).
+				} else {
+					const auto binding = Core::ParseGamepadHotkey(value);
+					if (binding.enabled) {
+						settings.gamepadHotkey = binding;
+					} else {
+						REX::LogWarning("IniSettingsStore: invalid GamepadHotkey '{}' — keeping default (disabled)", value);
+					}
 				}
 			} else if (key == "buffersize") {
 				if (!ok) {

@@ -20,6 +20,37 @@
  *                 "<decimal questId>") / window.clearQuestsRequested(
  *                 "<decimal questId,decimal questId,...>") on confirmed
  *                 clear (C5, #003)
+ * Keyboard surface (C6): one document-level keydown handler — Esc closes
+ * (overlay up: dismiss only); arrows/Enter/Space/PageUp-Down drive a
+ * roving focus model (zones search -> filters -> quests -> log -> clear;
+ * Left/Right cycle with wrap, Up/Down move within a zone and across zones
+ * at edges, Enter/Space activate; the clear-confirm overlay traps focus,
+ * starting on Cancel). PrismaUI's legacy controller conversion
+ * (D-pad -> arrows, A -> Enter, B -> Escape) rides the same events, so
+ * this is also the controller navigation layer. C7 controller actions
+ * call dhFocusCycleZone/dhFocusMove/dhFocusActivate/dhFocusPageScroll/
+ * dhFocusJumpLog — never raw DOM.
+ * Controller actions (C7): the plugin binds X/Y/LB/RB/LT/RT/Start through
+ * the V12 BindControllerAction API (only when PrismaUI exposes V12);
+ * PrismaUI re-dispatches them as the window event
+ * 'prisma-controller-action' with detail {action, button, state:
+ * "pressed"|"repeat"|"released"}. dhOnControllerAction handles "pressed"
+ * for every action, "repeat" only for page_up/page_down, and ignores
+ * "released". clear_quest/clear_all open the EXISTING confirm overlay —
+ * scope = current selection / forced ALL — and are ignored while the
+ * overlay is up; clear_quest does nothing when no quest is selected.
+ * page_up/page_down and jump_oldest/jump_newest delegate to the C6
+ * dhFocus* scroll surface; close mirrors Esc exactly (overlay up: dismiss
+ * only; else closeRequested). A/B/D-pad never arrive here — they stay on
+ * the legacy synthetic-key route the focus model consumes.
+ * Device-aware hints (C8): the plugin pushes the active input device via
+ * setInputDevice({"gamepad":bool}) from OnDomReady and every Focus/re-open
+ * (V12 runtimes only; V11 fallback and old DLLs are never pushed). PrismaUI
+ * itself fires 'prisma-input-device-change' at all views when the device
+ * changes (ControllerGlyphs.cpp: detail {gamepad, style}) — the listener
+ * covers switches mid-session. Both paths swap #hint textContent between
+ * the keyboard and controller wordings — text only, never layout. With no
+ * push and no event, #hint keeps its markup default ("Esc to close").
  * (RegisterJSListener binds each name as a global window function;
  * window.prisma has no sendEvent — its emit() routes to Papyrus only.)
  * Two-pane model (M4): dhAllLines is the client-side source of truth (the
@@ -250,6 +281,62 @@ function dhReportFilters() {
   if (typeof fn === "function") {  // registered by the plugin (new DLLs)
     fn(JSON.stringify(dhFiltersFromBoxes()));
   }
+}
+
+/* C8 — device-aware hint chrome. Two wordings for #hint, swapped by
+ * textContent only (no layout impact). The plugin pushes the active device
+ * via setInputDevice (V12 runtimes: OnDomReady + every Focus/re-open);
+ * PrismaUI fires 'prisma-input-device-change' at all views on a device
+ * switch (ControllerGlyphs.cpp NotifyPromptStateChanged: detail
+ * {gamepad, style}) — the window listener covers switches mid-session.
+ * With no push and no event (V11 fallback, old DLL) #hint keeps its
+ * markup default, which is also the keyboard wording's pre-push state. */
+const dhHintText = {
+  keyboard: "Esc close · ↑↓ navigate · Enter select",
+  controller: "B close · A select · X clear quest · Y clear all · LB/RB page"
+};
+let dhHintMode = "keyboard";  // "keyboard" | "controller"
+
+/* Swap #hint to the given mode's wording. Unknown modes are ignored; the
+ * state updates even when #hint is absent (old html) so a later push still
+ * lands on the right wording if the element appears. */
+function dhApplyHintMode(mode) {
+  if (mode !== "keyboard" && mode !== "controller") {
+    return;
+  }
+  dhHintMode = mode;
+  const hint = document.getElementById("hint");
+  if (hint) {
+    hint.textContent = dhHintText[mode];
+  }
+}
+
+/* Plugin -> JS (C8): active input device on open / re-open. Tolerant parse
+ * mirroring setFilters: a payload that does not parse to an object is
+ * dropped entirely; a non-boolean gamepad keeps the keyboard default — a
+ * bogus payload must never strand the hint in controller mode. */
+function setInputDevice(json) {
+  const parsed = dhParse(json, null);
+  if (!parsed || typeof parsed !== "object") {
+    return;
+  }
+  dhApplyHintMode(parsed.gamepad === true ? "controller" : "keyboard");
+}
+
+/* C8 — PrismaUI fires 'prisma-input-device-change' at every view when the
+ * active input device changes. detail.gamepad is the shipped field; the
+ * contract's defensive alternate detail.usingGamepad is accepted too.
+ * Malformed events (no detail / non-boolean both-fields) are ignored, so a
+ * stray event can never move the hint off the keyboard wording by accident. */
+function dhOnInputDeviceChange(event) {
+  const detail = event && event.detail;
+  if (!detail) {
+    return;
+  }
+  const gamepad = typeof detail.gamepad === "boolean"
+    ? detail.gamepad
+    : detail.usingGamepad === true;
+  dhApplyHintMode(gamepad ? "controller" : "keyboard");
 }
 
 /* Display label for a quest bucket: first non-empty questName seen, else the
@@ -1040,6 +1127,7 @@ function setHistory(lines) {
   }
   dhRenderIndex();
   dhRenderLog();
+  dhFocusReset();  // C6/D9: view-open focus — log, or quest index when empty
 }
 
 /* Per-NPC speaker colors: golden-angle assignment. Each distinct NPC name
@@ -1165,11 +1253,17 @@ function dhOverlayVisible() {
   return !!overlay && !overlay.hidden;
 }
 
-function dhShowClearOverlay() {
+function dhShowClearOverlay(scope) {
   // #003: the clear scope is the current selection — "all", a single quest
   // (incl. a one-quest selection set), or "multi" with the numerically
-  // sorted ids for a larger set (deterministic payload order).
-  if (dhSelectedQuests.size > 1) {
+  // sorted ids for a larger set (deterministic payload order). C7: the
+  // controller's clear_all action passes scope "all" to force ALL scope
+  // regardless of the selection; the button and the focus model pass
+  // nothing and keep the selection-derived behavior.
+  if (scope === "all") {
+    dhClearTarget = "all";
+    dhClearIds = [];
+  } else if (dhSelectedQuests.size > 1) {
     dhClearTarget = "multi";
     dhClearIds = Array.from(dhSelectedQuests, Number).sort(function (a, b) { return a - b; });
   } else {
@@ -1199,6 +1293,7 @@ function dhShowClearOverlay() {
   if (overlay) {
     overlay.hidden = false;
   }
+  dhFocusEnterOverlay();  // C6: trap focus on the overlay (starts on Cancel)
 }
 
 function dhHideClearOverlay() {
@@ -1206,6 +1301,7 @@ function dhHideClearOverlay() {
   if (overlay) {
     overlay.hidden = true;
   }
+  dhFocusExitOverlay();  // C6/D6: restore the pre-overlay zone position
 }
 
 function dhConfirmClear() {
@@ -1225,6 +1321,517 @@ function dhConfirmClear() {
     if (typeof fn === "function") {
       fn(String(dhClearTarget));
     }
+  }
+}
+
+/* C7 — V12 controller actions. PrismaUI delivers bound buttons as the
+ * window event 'prisma-controller-action' with detail {action, button,
+ * state}. "pressed" drives every action; "repeat" only page_up/page_down
+ * (held-button paging); "released" is ignored. clear_quest/clear_all reuse
+ * the existing confirm overlay — dhShowClearOverlay IS the button's code
+ * path, so nothing here duplicates overlay logic; both are ignored while
+ * the overlay is already up, and clear_quest does nothing when no quest
+ * is selected (the dedicated clear_all/Y action owns ALL scope). close
+ * mirrors the Esc branch exactly: overlay up -> dismiss only, else
+ * closeRequested. Scroll/jump actions delegate to the C6 dhFocus* surface
+ * (O(virtualized-window) arithmetic per event — no DOM measurement). */
+function dhOnControllerAction(event) {
+  const detail = event && event.detail;
+  if (!detail) {
+    return;
+  }
+  const action = detail.action;
+  if (detail.state === "repeat") {
+    if (action === "page_up") {
+      dhFocusPageScroll(-1);
+    } else if (action === "page_down") {
+      dhFocusPageScroll(1);
+    }
+    return;
+  }
+  if (detail.state !== "pressed") {
+    return;  // "released" (and anything unknown) is ignored
+  }
+  if (action === "clear_quest") {
+    if (dhOverlayVisible() || dhSelectedQuests.size === 0) {
+      return;  // already confirming, or no quest scope to clear
+    }
+    dhShowClearOverlay();
+  } else if (action === "clear_all") {
+    if (dhOverlayVisible()) {
+      return;
+    }
+    dhShowClearOverlay("all");
+  } else if (action === "page_up") {
+    dhFocusPageScroll(-1);
+  } else if (action === "page_down") {
+    dhFocusPageScroll(1);
+  } else if (action === "jump_oldest") {
+    dhFocusJumpLog(false);
+  } else if (action === "jump_newest") {
+    dhFocusJumpLog(true);
+  } else if (action === "close") {
+    if (dhOverlayVisible()) {
+      dhHideClearOverlay();  // dismiss only; the panel stays open
+    } else {
+      dhSend("closeRequested");
+    }
+  }
+}
+
+/* C6 — keyboard/controller focus model (roving zones). PrismaUI's legacy
+ * controller conversion (D-pad -> arrows, A -> Enter, B -> Escape) rides
+ * the same keydown events, so this model is the whole in-menu navigation
+ * layer for keyboard and controller alike. Zones cycle in the contract
+ * order (D2): search -> filters -> quests -> log -> clear, Left/Right =
+ * prev/next with cyclic wrap; Up/Down move within a zone and, at zone
+ * edges (the log consumes Up/Down for scrolling — D4), move between
+ * zones. Focus is tracked in JS state — the real DOM focus only ever
+ * lands on #search (so typing works); every other zone resolves its
+ * target element from state on demand, so index re-renders can rebuild
+ * rows without stale-element bookkeeping. The visible indicator is the
+ * .dh-focus class (history.css) — deliberately NOT .qentry.active, which
+ * means selection (contract). Perf (KB rule 1): each handler reads
+ * first (scrollTop / one clientHeight / row offsets) and writes last
+ * (class + scrollTop); per-keyrepeat work is dhBlockLayout() arithmetic
+ * or O(1), and the scrollTop write rides the existing dhOnScroll ->
+ * dhUpdateWindow windowing pass — no new measurement anywhere.
+ * C7 surface (INTEGRATION_CONTRACT): dhFocusCycleZone, dhFocusMove,
+ * dhFocusActivate, dhFocusPageScroll, dhFocusJumpLog. */
+
+const dhFocusZoneOrder = ["search", "filters", "quests", "log", "clear"];
+
+/* Per-zone position: filters = checkbox index (dhBuckets order), quests =
+ * visible row index; roving — a zone remembers its position across
+ * visits, clamped to what is currently rendered. */
+const dhFocusPos = { search: 0, filters: 0, quests: 0, log: 0, clear: 0 };
+let dhFocusZone = "log";
+let dhFocusPrev = null;    // D6: zone saved while the overlay traps focus
+let dhFocusOverlay = -1;   // D6: trap position (0 = confirm, 1 = cancel)
+let dhFocusMarked = [];    // elements currently carrying .dh-focus
+
+/* Resolve the current zone's target element from state (never cached
+ * across renders): dhRenderIndex rebuilds the rows, so the quests target
+ * is re-queried by position each time. Returns null when nothing
+ * renderable is there. */
+function dhFocusTarget() {
+  if (dhFocusOverlay >= 0) {
+    return document.getElementById(dhFocusOverlay === 0 ? "overlayconfirm" : "overlaycancel");
+  }
+  if (dhFocusZone === "search") {
+    return document.getElementById("search");
+  }
+  if (dhFocusZone === "filters") {
+    return document.getElementById("ftype-" + dhBuckets[dhFocusPos.filters]);
+  }
+  if (dhFocusZone === "quests") {
+    const list = document.getElementById("quests");
+    if (!list) {
+      return null;
+    }
+    const rows = list.children;
+    if (rows.length === 0) {
+      return null;
+    }
+    const i = Math.min(dhFocusPos.quests, rows.length - 1);
+    dhFocusPos.quests = i;  // adopt the clamp so later moves start here
+    return rows[i];
+  }
+  if (dhFocusZone === "log") {
+    return document.getElementById("log");
+  }
+  return document.getElementById("clear");
+}
+
+/* Move the visible indicator to whatever dhFocusTarget resolves: strip
+ * the class from the previous marks (detached rows are harmless no-ops)
+ * and add it to the new target. Real DOM focus only accompanies the
+ * search zone — leaving it blurs, so typed text can't land in the box
+ * while another zone owns the model. */
+function dhFocusApply() {
+  for (const el of dhFocusMarked) {
+    el.classList.remove("dh-focus");
+  }
+  dhFocusMarked = [];
+  const el = dhFocusTarget();
+  if (el) {
+    el.classList.add("dh-focus");
+    dhFocusMarked.push(el);
+  }
+  const active = document.activeElement;
+  if (active && active.id === "search" && (!el || el.id !== "search")) {
+    active.blur();
+  }
+  if (el && el.id === "search" && dhFocusOverlay < 0
+      && typeof el.focus === "function") {
+    el.focus();
+  }
+}
+
+/* Enter a zone at its roving position and show the indicator. */
+function dhFocusSetZone(zone) {
+  dhFocusZone = zone;
+  dhFocusApply();
+}
+
+/* C7 surface — Left/Right zone cycle (D2): prev/next in dhFocusZoneOrder,
+ * cyclic wrap. dir < 0 = prev, > 0 = next. */
+function dhFocusCycleZone(dir) {
+  let i = dhFocusZoneOrder.indexOf(dhFocusZone);
+  if (i < 0) {
+    i = 0;
+  }
+  i = (i + (dir < 0 ? -1 : 1) + dhFocusZoneOrder.length) % dhFocusZoneOrder.length;
+  dhFocusSetZone(dhFocusZoneOrder[i]);
+}
+
+/* D6 — the confirm overlay owns the model while it is up: arrows toggle
+ * confirm/cancel, Enter activates, Esc stays on the existing dismiss
+ * branch. Entry saves the pre-overlay zone (once — a re-show while
+ * trapped must not clobber the saved state) and starts on Cancel, the
+ * safe default against a double-press clearing history. */
+function dhFocusEnterOverlay() {
+  if (dhFocusOverlay < 0) {
+    dhFocusPrev = dhFocusZone;
+  }
+  dhFocusOverlay = 1;  // Cancel
+  dhFocusApply();
+}
+
+function dhFocusExitOverlay() {
+  dhFocusOverlay = -1;
+  if (dhFocusPrev) {
+    dhFocusZone = dhFocusPrev;
+    dhFocusPrev = null;
+  }
+  dhFocusApply();
+}
+
+/* Quest-row reveal: geometry reads FIRST (KB rule 1), then the single
+ * container scrollTop write. The index list is small and unvirtualized,
+ * so one offsetTop pair per keypress is bounded and cheap. */
+function dhFocusRevealRow(row) {
+  const list = document.getElementById("quests");
+  if (!list) {
+    return;
+  }
+  const top = row.offsetTop;       // reads...
+  const h = row.offsetHeight;
+  const view = list.clientHeight;
+  const cur = list.scrollTop;
+  let target = cur;
+  if (top < cur) {
+    target = top;
+  } else if (top + h > cur + view) {
+    target = top + h - view;
+  }
+  if (target !== cur) {
+    list.scrollTop = target;       // ...then the only write
+  }
+}
+
+/* After a quest-row activation rebuilds the index, land the focus back
+ * on the same quest (D8): find the fresh row by data.key and adopt its
+ * position; a row that filtered out lands on the clamped position. */
+function dhFocusReacquireQuest(key) {
+  const list = document.getElementById("quests");
+  if (list) {
+    const rows = list.children;
+    for (let i = 0; i < rows.length; i++) {
+      if (rows[i].dataset.key === key) {
+        dhFocusPos.quests = i;
+        dhFocusRevealRow(rows[i]);
+        dhFocusApply();
+        return;
+      }
+    }
+  }
+  dhFocusApply();
+}
+
+/* C6/D1 log scroll helpers: line step comes from the virtualization
+ * accounting — dhBlockLayout().est is the current per-block average
+ * (measured -> dhEstSeed -> kInitialRowEst fallback chain), so a key
+ * repeat is O(blocks) arithmetic, zero DOM measurement. Page steps read
+ * one clean clientHeight BEFORE any write (KB rule 1) and clamp against
+ * the simulated total (dhBlockLayout().total — the same height the
+ * spacers present to the scrollbar). The scrollTop write rides the
+ * existing dhOnScroll -> dhUpdateWindow pass for windowing. */
+
+function dhLogLineStepPx() {
+  return dhBlockLayout().est / kBlockRows;
+}
+
+function dhLogScrollLines(delta) {
+  const log = document.getElementById("log");
+  if (!log) {
+    return;
+  }
+  const cur = log.scrollTop;  // read first — nothing written yet this key
+  log.scrollTop = Math.max(0, cur + delta * dhLogLineStepPx());  // write last
+}
+
+function dhLogScrollPages(delta) {
+  const log = document.getElementById("log");
+  if (!log) {
+    return;
+  }
+  const cur = log.scrollTop;   // reads first...
+  const view = log.clientHeight;
+  const max = Math.max(0, dhBlockLayout().total - view);
+  log.scrollTop = Math.min(max, Math.max(0, cur + delta * view));  // ...write last
+}
+
+/* C7 surface — page the log by whole viewports (LB/RB actions and the
+ * PageUp/PageDown keys share this). */
+function dhFocusPageScroll(dir) {
+  dhLogScrollPages(dir < 0 ? -1 : 1);
+}
+
+/* C7 surface — oldest/newest jump (LT/RT actions): clamp against the
+ * simulated total, then let the scroll event re-window. */
+function dhFocusJumpLog(toNewest) {
+  const log = document.getElementById("log");
+  if (!log) {
+    return;
+  }
+  const max = Math.max(0, dhBlockLayout().total - log.clientHeight);
+  log.scrollTop = toNewest ? max : 0;
+}
+
+/* D5 — within the filters zone the horizontal axis moves the roving
+ * checkbox (cyclic among the four); the vertical axis exits the zone.
+ * Kept separate from dhFocusMove because that is the Up/Down axis. */
+function dhFocusStepFilter(dir) {
+  dhFocusPos.filters = (dhFocusPos.filters + (dir < 0 ? -1 : 1)
+    + dhBuckets.length) % dhBuckets.length;
+  dhFocusApply();
+}
+
+/* C7 surface — Up/Down within the current zone. Returns true when the
+ * key was consumed; false means a zone edge (or a single-position zone)
+ * and the caller falls through to zone cycling. */
+function dhFocusMove(dir) {
+  if (dhFocusOverlay >= 0) {  // trap: toggle between the two buttons
+    dhFocusOverlay = 1 - dhFocusOverlay;
+    dhFocusApply();
+    return true;
+  }
+  if (dhFocusZone === "quests") {
+    const list = document.getElementById("quests");
+    const count = list ? list.children.length : 0;
+    if (count === 0) {
+      return false;
+    }
+    const next = dhFocusPos.quests + (dir < 0 ? -1 : 1);
+    if (next < 0 || next >= count) {
+      return false;  // zone edge — Up/Down move between zones
+    }
+    dhFocusPos.quests = next;
+    dhFocusRevealRow(list.children[next]);  // reads+write BEFORE the class write
+    dhFocusApply();
+    return true;
+  }
+  if (dhFocusZone === "log") {
+    dhLogScrollLines(dir < 0 ? -1 : 1);  // D4: always scroll, never cycle
+    return true;
+  }
+  return false;  // search / filters / clear: no vertical within — edges fall through
+}
+
+/* C7 surface — Enter/Space activation. Every path delegates to the
+ * element's own wired handler: row.click() for quest rows (D8 — the
+ * dhMakeEntry click closure is the single selection code path; a plain
+ * synthetic click carries no Ctrl modifier), checkbox.click() for
+ * filters (fires the existing change listeners), and the overlay/clear
+ * functions directly (they ARE the click handlers). */
+function dhFocusActivate() {
+  if (dhFocusOverlay >= 0) {
+    if (dhFocusOverlay === 0) {
+      dhConfirmClear();
+    } else {
+      dhHideClearOverlay();
+    }
+    return true;
+  }
+  if (dhFocusZone === "search") {
+    dhFocusSetZone("quests");  // contract §3: Enter moves to the quest index
+    return true;
+  }
+  if (dhFocusZone === "filters") {
+    const box = document.getElementById("ftype-" + dhBuckets[dhFocusPos.filters]);
+    if (box) {
+      box.click();
+      return true;
+    }
+    return false;
+  }
+  if (dhFocusZone === "quests") {
+    const row = dhFocusTarget();
+    if (row) {
+      const key = row.dataset.key;  // rows rebuild on click — refocus by key
+      row.click();
+      dhFocusReacquireQuest(key);
+      return true;
+    }
+    return false;
+  }
+  if (dhFocusZone === "log") {
+    return false;  // nothing to activate
+  }
+  dhShowClearOverlay();  // clear button — the existing confirm flow
+  return true;
+}
+
+/* Route a keypress through the focus model; the shared keydown handler
+ * keeps the Esc branch and delegates everything else here. Returns true
+ * when the key belongs to the model. Key names are matched with keyCode
+ * fallbacks, same convention as the Esc branch — Ultralight's synthetic
+ * controller KeyEvents are not guaranteed to carry full key names. */
+function dhFocusOnKey(event) {
+  const key = event.key;
+  const code = event.keyCode;
+  const up = key === "ArrowUp" || code === 38;
+  const down = key === "ArrowDown" || code === 40;
+  const left = key === "ArrowLeft" || code === 37;
+  const right = key === "ArrowRight" || code === 39;
+  const enter = key === "Enter" || code === 13;
+  const space = key === " " || key === "Spacebar" || code === 32;
+  const pageUp = key === "PageUp" || code === 33;
+  const pageDown = key === "PageDown" || code === 34;
+  if (!(up || down || left || right || enter || space || pageUp || pageDown)) {
+    return false;
+  }
+  if (space && event.target && event.target.id === "search") {
+    return false;  // a typed character while the box owns the real focus
+  }
+  if (dhFocusOverlay >= 0) {
+    if (up || down || left || right) {
+      event.preventDefault();
+      dhFocusOverlay = 1 - dhFocusOverlay;
+      dhFocusApply();
+    } else if (enter) {
+      event.preventDefault();
+      dhFocusActivate();
+    } else {
+      event.preventDefault();  // Space/PageUp-Down must not act natively
+    }
+    return true;
+  }
+  if (left || right) {
+    if (dhFocusZone === "search") {
+      return true;  // D3: caret keys — no preventDefault, default caret move
+    }
+    event.preventDefault();
+    if (dhFocusZone === "filters") {
+      dhFocusStepFilter(right ? 1 : -1);  // D5: wrap among the 4 checkboxes
+      return true;
+    }
+    dhFocusCycleZone(right ? 1 : -1);
+    return true;
+  }
+  if (up || down) {
+    event.preventDefault();
+    const dir = up ? -1 : 1;
+    if (dhFocusZone === "search") {
+      dhFocusSetZone("filters");  // D3: the adjacent zone, both directions
+      return true;
+    }
+    if (!dhFocusMove(dir)) {
+      dhFocusCycleZone(dir);  // zone edge / single-position zone
+    }
+    return true;
+  }
+  if (enter) {
+    event.preventDefault();
+    dhFocusActivate();
+    return true;
+  }
+  if (space) {
+    event.preventDefault();
+    if (dhFocusZone === "filters") {
+      dhFocusActivate();  // contract §4: Space toggles the focused checkbox
+    }
+    return true;  // swallowed elsewhere — no native button/checkbox surprise
+  }
+  if (pageUp || pageDown) {
+    event.preventDefault();
+    if (dhFocusZone === "log") {
+      dhLogScrollPages(pageDown ? 1 : -1);
+    }
+    return true;
+  }
+  return false;
+}
+
+/* D9 — view-open focus: the snapshot replay that opens the view (and the
+ * post-clear re-push) resets the model to its contract start — the log
+ * pane, or the quest index when there is nothing to read yet. */
+function dhFocusReset() {
+  dhFocusOverlay = -1;
+  dhFocusPrev = null;
+  dhFocusZone = dhAllLines.length === 0 ? "quests" : "log";
+  dhFocusApply();
+}
+
+/* Keep the model honest about mouse use (contract: optional, cheap): map
+ * a click back to its zone so the next arrow key continues from where
+ * the user clicked. parentNode walks — Element.closest is not guaranteed
+ * under Ultralight's JSC (dhTipFor convention). Bubbling lands this AFTER
+ * the target's own handler, so a rebuilt quest list is re-queried live. */
+function dhFocusSyncFromClick(event) {
+  if (dhFocusOverlay >= 0) {
+    return;  // the trap owns the model until dismissed
+  }
+  let node = event.target;
+  while (node && node !== document) {
+    const id = node.id;
+    if (id === "search") {
+      dhFocusZone = "search";
+      dhFocusApply();
+      return;
+    }
+    if (id && id.indexOf("ftype-") === 0) {
+      dhFocusZone = "filters";
+      const b = dhBuckets.indexOf(id.slice(6));
+      if (b >= 0) {
+        dhFocusPos.filters = b;
+      }
+      dhFocusApply();
+      return;
+    }
+    if (id === "filters") {
+      dhFocusZone = "filters";  // label-text click: keep the roving box
+      dhFocusApply();
+      return;
+    }
+    if (node.classList && node.classList.contains("qentry")) {
+      const list = document.getElementById("quests");
+      const rows = list ? list.children : [];
+      for (let i = 0; i < rows.length; i++) {
+        if (rows[i] === node) {
+          dhFocusZone = "quests";
+          dhFocusPos.quests = i;
+          dhFocusApply();
+          return;
+        }
+      }
+      return;
+    }
+    if (id === "log" || (node.classList && node.classList.contains("line"))) {
+      dhFocusZone = "log";
+      dhFocusApply();
+      return;
+    }
+    if (id === "clear") {
+      dhFocusZone = "clear";
+      dhFocusApply();
+      return;
+    }
+    if (id === "overlayconfirm" || id === "overlaycancel") {
+      return;  // overlay clicks flow through show/hide — trap stays put
+    }
+    node = node.parentNode;
   }
 }
 
@@ -1338,6 +1945,9 @@ document.addEventListener("DOMContentLoaded", () => {
   if (overlayCancel) {
     overlayCancel.addEventListener("click", dhHideClearOverlay);
   }
+  window.addEventListener("prisma-controller-action", dhOnControllerAction);  // C7: V12 controller actions
+  window.addEventListener("prisma-input-device-change", dhOnInputDeviceChange);  // C8: device switch mid-session
+  document.addEventListener("click", dhFocusSyncFromClick);  // C6: model follows mouse
   document.addEventListener("keydown", (event) => {
     // Ultralight reports Escape as "Unidentified" — match by keyCode.
     if (event.key === "Escape" || event.keyCode === 27) {
@@ -1346,6 +1956,8 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
       }
       dhSend("closeRequested");
+      return;
     }
+    dhFocusOnKey(event);  // C6: arrows/Enter/Space/PageUp-Down (controller-ready)
   });
 });
