@@ -106,18 +106,13 @@ namespace F4DH
 		// holds 0xFF when the binding is a single button — 0 is DUp, valid).
 		constexpr std::uint8_t kNoGamepadModifier{ 0xFF };
 
-		// C11: OG 1.10.163 delivers Windows virtual-key codes in
-		// ButtonEvent.keyMask (empirically confirmed by the C10 diagnostic
-		// dumps — H arrived as 72/0x48); NG/AE deliver DirectInput scan codes.
-		// Translate the configured DIK scan code to its VK equivalent once, on
-		// OG only. The INI setting stays documented as a DirectInput scan code.
+		// The engine delivers Windows virtual-key codes in ButtonEvent.keyMask
+		// on every desktop runtime — OG confirmed by the C10 diagnostic dumps,
+		// AE 1.11.240 confirmed 2026-10-18 (H arrives as 72/0x48, Esc as 27).
+		// Translate the configured DIK scan code to its VK equivalent once at
+		// init. The INI setting stays documented as a DirectInput scan code.
 		[[nodiscard]] MatchPair ResolveHotkeyMatchCode(std::uint32_t a_scanCode, Core::ILogger& a_log)
 		{
-			if (F4SE::GetRuntimeType() != F4SE::RuntimeType::kOG) {
-				a_log.Info(std::format("hotkey: DIK {} kept as raw scan code (NG/AE runtime)", a_scanCode));
-				return { a_scanCode, 0 };
-			}
-
 			if (const auto numpad = NumpadVkPair(a_scanCode); numpad.first != 0) {
 				a_log.Info(std::format("hotkey: DIK {} -> VK {} / VK {} (numpad key, both NumLock states matched)", a_scanCode, numpad.first, numpad.second));
 				return { numpad.first, numpad.second };
@@ -130,7 +125,7 @@ namespace F4DH
 				return { a_scanCode, 0 };
 			}
 
-			a_log.Info(std::format("hotkey: DIK {} -> VK {} (OG runtime)", a_scanCode, vk));
+			a_log.Info(std::format("hotkey: DIK {} -> VK {}", a_scanCode, vk));
 			return { vk, 0 };
 		}
 

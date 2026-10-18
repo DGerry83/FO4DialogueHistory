@@ -39,7 +39,8 @@ namespace
 	//   OG 1.10.163 = 875508  (verified in the user's version-1-10-163-0.bin,
 	//                          offset 0x12b2f70)
 	//   NG 1.10.984 = 2249542
-	//   AE 1.11.191 = 2249542  (reused NG value — UNVERIFIED; user runtime is OG)
+	//   AE 1.11.191 = 2249542  (reused NG value — runtime-verified 2026-10-18 on
+	//                          AE 1.11.240: hook installed, capture confirmed)
 	// AV's Iddb has no soft-failure path: an address lookup of an ID missing
 	// from the installed DB is a hard REX::Fail (TerminateProcess) — the C8
 	// CTD was exactly that. Never collapse this to a single-runtime ID, and
@@ -208,7 +209,8 @@ namespace F4DH::Infrastructure
 		}
 		g_sink = &a_sink;
 
-		REX::LogInformation("SubtitleHook: ShowSubtitle detour installed (Address Library)");
+		REX::LogInformation("SubtitleHook: ShowSubtitle detour installed (Address Library id {} -> offset {:#x}, address {:#x})",
+			kShowSubtitle.GetId(), kShowSubtitle.GetOffset(), kShowSubtitle.GetAddress());
 		return true;
 	}
 }
