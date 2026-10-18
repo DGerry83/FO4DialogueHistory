@@ -91,10 +91,11 @@
  * (never the DOM). While a term is active: the quest index narrows to
  * quests with >=1 match (AND with the bucket checkboxes and the quest-name
  * box; "No matching quests." placeholder when nothing matches); matching
- * log rows highlight .dh-hit spans (.dh-hit-current on the cursor line),
- * built by text-node splitting in dhMakeRow so C17 remounts re-apply them
- * for free; committing jumps to the most recent match (block-layout
- * arithmetic, scrollTop written last); Enter=older / Shift+Enter=newer
+ * log rows carry .dh-hit-line (.dh-hit-line-current on the cursor line),
+ * added at row build in dhMakeRow so C17 remounts re-apply them for free;
+ * committing jumps to the most recent match (estimate + bounded
+ * DOM-anchored correction in dhBodySearchJump); Enter=older /
+ * Shift+Enter=newer
  * walk the matches with wrap and a "n of m" readout numbered FROM the
  * most recent match ("1 of m" on commit). appendLine grows the match set
  * incrementally without a re-jump; setHistory clears the term. Empty term
@@ -491,36 +492,28 @@ function dhRenderIndex() {
 /* Build one log row for a model line: speaker span (per-NPC color on npc
  * kinds), text span, dataset fields — the exact markup the CSS expects.
  * Pure construction, no DOM insertion or scrolling; callers own both.
- * Body search (AC2): while a term is active and the line matches, both
- * spans are built by text-node splitting (never innerHTML) with the
- * matched substrings wrapped in .dh-hit spans — .dh-hit-current on the
- * cursor line. Derived at row build, so C17 remounts re-apply highlights
- * for free. */
+ * Body search (AC2; whole-line ruling 2026-10-18): while a term is active
+ * and the line matches, the whole row carries .dh-hit-line —
+ * .dh-hit-line-current on the cursor line. Row text stays plain
+ * textContent, byte-identical to the unsearched row. Derived at row
+ * build, so C17 remounts re-apply the highlight for free. */
 function dhMakeRow(line) {
   const row = document.createElement("div");
   row.className = "line " + line.kind;
   row.dataset.questId = String(line.questId);
   row.dataset.questName = line.questName;
+  if (dhBodySearch.term !== ""
+      && dhBodySearchLineMatches(line, dhBodySearch.term)) {
+    row.classList.add(dhAllLines[dhBodySearch.matches[dhBodySearch.cursor]] === line
+      ? "dh-hit-line-current"
+      : "dh-hit-line");
+  }
   const speaker = document.createElement("span");
   speaker.className = "speaker";
+  speaker.textContent = line.speaker + ":";
   const text = document.createElement("span");
   text.className = "text";
-  const hitRanges = dhBodySearch.term === ""
-    ? []
-    : dhBodySearchRangesFor(line, dhBodySearch.term);
-  if (hitRanges.length === 0) {
-    speaker.textContent = line.speaker + ":";
-    text.textContent = " " + line.text;
-  } else {
-    const hitCls = dhAllLines[dhBodySearch.matches[dhBodySearch.cursor]] === line
-      ? "dh-hit-current"
-      : "dh-hit";
-    const speakerText = line.speaker + ":";
-    dhAppendHighlighted(speaker, speakerText, hitRanges, 0, speakerText.length, hitCls);
-    const textText = " " + line.text;
-    dhAppendHighlighted(text, textText, hitRanges,
-      speakerText.length, speakerText.length + textText.length, hitCls);
-  }
+  text.textContent = " " + line.text;
   if (line.kind === "npc") {
     speaker.style.color = dhNameColor(String(line.speaker));
   }
@@ -704,8 +697,13 @@ function dhMeasureMountedBlocks(first, last, entryScrollTop, layout) {
     }
     const h = el.offsetHeight;
     dhBlockHeights[b] = h;
-    dhBlockSum += h;
-    dhBlockMeasured += 1;
+    if (dhViewLines.length >= (b + 1) * kBlockRows) {
+      // Full blocks only: a partially filled tail drags the running
+      // average toward zero and poisons every unmeasured block's price
+      // (its height is still recorded above, so totals stay truthful).
+      dhBlockSum += h;
+      dhBlockMeasured += 1;
+    }
     if (layout.offsets[b] + layout.heights[b] <= entryScrollTop) {
       delta += h - layout.heights[b];
     }
@@ -871,15 +869,15 @@ function dhCheckLogWidth() {
  * substring scan over "speaker: text" across the whole dhAllLines model —
  * never the DOM. While a term is active: the quest index narrows to quests
  * with >=1 match (AC1, AND with bucket checkboxes + quest-name box), all
- * matching rows highlight .dh-hit spans with .dh-hit-current on the cursor
- * line (AC2), committing jumps to the most recent match (AC3), and
+ * matching rows carry the whole-line .dh-hit-line class with
+ * .dh-hit-line-current on the cursor line (AC2, whole-line ruling
+ * 2026-10-18), committing jumps to the most recent match (AC3), and
  * prev/next walk the matches with wrap (AC4). appendLine grows the match
  * set incrementally without a re-jump (AC8); setHistory clears the term.
  * Empty/whitespace term = Idle: every extension here is inert and the idle
- * paths stay byte-identical (AC9). Perf KB binding: commit/step perform
- * exactly ONE layout read (the viewport height) BEFORE any DOM write, and
- * scroll jumps are pure dhBlockLayout() arithmetic with the scrollTop
- * write LAST. */
+ * paths stay byte-identical (AC9). Perf KB binding: jumps run on discrete
+ * input only — dhBodySearchJump is a bounded (<=3 passes) estimate +
+ * DOM-anchored correction loop, never on a scroll/resize path. */
 
 const kBodySearchDebounceMs = 200;
 
@@ -897,60 +895,21 @@ const dhBodySearch = {
 };
 let dhBodySearchInput = null;  // element handed to dhBodySearchWireInput (Chunk B markup)
 
-/* Case-insensitive substring ranges of term in the line's search haystack
- * ("speaker: text"), as [start, end) haystack offsets, ascending and
- * non-overlapping (a fresh search starts where the previous hit ended, so
- * "aa" in "aaa" is one hit — the highlight walker requires ordered,
- * non-overlapping ranges). */
-function dhBodySearchRangesFor(line, term) {
-  const ranges = [];
-  if (term === "") {
-    return ranges;
-  }
-  const haystack = (line.speaker + ": " + line.text).toLowerCase();
-  let from = 0;
-  let at = haystack.indexOf(term, from);
-  while (at !== -1) {
-    ranges.push([at, at + term.length]);
-    from = at + term.length;
-    at = haystack.indexOf(term, from);
-  }
-  return ranges;
-}
-
-/* Append spanText — the slice of the search haystack bounded by
- * [spanStart, spanEnd) in haystack coordinates — to target, wrapping the
- * parts covered by hitRanges in <span class="cls">. Text-node splitting
- * only (never innerHTML); a range spanning the "speaker: " boundary is
- * clipped to whichever span(s) it touches, so the rendered text always
- * equals the unsearched row exactly. */
-function dhAppendHighlighted(target, spanText, hitRanges, spanStart, spanEnd, cls) {
-  let pos = spanStart;
-  for (let i = 0; i < hitRanges.length; i++) {
-    const s = Math.max(hitRanges[i][0], spanStart);
-    const e = Math.min(hitRanges[i][1], spanEnd);
-    if (s >= e) {
-      continue;
-    }
-    if (s > pos) {
-      target.append(document.createTextNode(spanText.slice(pos - spanStart, s - spanStart)));
-    }
-    const hit = document.createElement("span");
-    hit.className = cls;
-    hit.textContent = spanText.slice(s - spanStart, e - spanStart);
-    target.append(hit);
-    pos = e;
-  }
-  if (pos < spanEnd) {
-    target.append(document.createTextNode(spanText.slice(pos - spanStart)));
-  }
+/* Case-insensitive substring test over the line's search haystack
+ * ("speaker: text"); the term arrives lowercased (dhBodySearchCommit
+ * normalizes). Whole-line highlight (2026-10-18 ruling): a boolean is all
+ * dhMakeRow needs — where the match sits inside the line is irrelevant. */
+function dhBodySearchLineMatches(line, term) {
+  return term !== ""
+    && (line.speaker + ": " + line.text).toLowerCase().indexOf(term) !== -1;
 }
 
 /* Rebuild every mounted block's rows through dhMakeRow — the C17 remount
  * path, driven manually. Used after commit/cursor moves/clear so
- * already-mounted rows pick up fresh .dh-hit / .dh-hit-current state
- * without waiting for a scroll. Content is identical, so block heights and
- * spacers are untouched; no layout reads anywhere (writes only). */
+ * already-mounted rows pick up fresh .dh-hit-line / .dh-hit-line-current
+ * state without waiting for a scroll. Content is identical, so block
+ * heights and spacers are untouched; no layout reads anywhere (writes
+ * only). */
 function dhBodySearchRefreshMountedRows() {
   for (const pair of dhMounted) {
     const b = pair[0];
@@ -992,13 +951,26 @@ function dhBodySearchUpdateCount() {
 }
 
 /* Jump the log so the given match (a dhAllLines index) sits at the top of
- * the viewport: the target offset is pure dhBlockLayout() arithmetic
- * (block prefix offset + row-in-block x per-row estimate), clamped against
- * the simulated total, and scrollTop is written LAST. When the target's
- * line is filtered out of the current view, the cursor instead adopts the
- * nearest visible match (walking outward from the cursor; older wins
- * ties — spec §5.4: visibility is a render concern, the count stays
- * global) and the mounted rows + readout refresh to match. */
+ * the viewport. Two phases, discrete-input only and bounded (perf KB):
+ *  1. ESTIMATE — the target offset is dhBlockLayout() arithmetic: block
+ *     prefix offset + row-in-block x the block's own per-row rate (its
+ *     measured height when known — divided by its ACTUAL row count so a
+ *     partial tail block doesn't under-rate — the running average
+ *     otherwise), clamped against the simulated total. The scrollTop
+ *     write is silent, then a synchronous dhUpdateWindow() mounts and
+ *     measures the landing window.
+ *  2. CORRECTION — once the target block is mounted, ONE rect-delta read
+ *     (row top vs log top) re-anchors to the row's REAL position exactly,
+ *     then a final window pass settles the mount set. Blocks far from the
+ *     panel-open window are priced by estimate, so the first landing can
+ *     miss by more than the overscan; every pass measures the blocks it
+ *     lands on, so re-aiming converges. Capped at 3 passes — if the
+ *     target never mounts, the last estimate stands.
+ * When the target's line is filtered out of the current view, the cursor
+ * instead adopts the nearest visible match (walking outward from the
+ * cursor; older wins ties — spec §5.4: visibility is a render concern,
+ * the count stays global) and the mounted rows + readout refresh to
+ * match. */
 function dhBodySearchJump(matchIdx, viewH) {
   const log = document.getElementById("log");
   if (!log || dhBodySearch.term === "" || dhBodySearch.matches.length === 0) {
@@ -1042,20 +1014,38 @@ function dhBodySearchJump(matchIdx, viewH) {
     dhBodySearchUpdateCount();
   }
   if (viewH === undefined) {
-    viewH = log.clientHeight;  // standalone call: the read stays before the write
+    viewH = log.clientHeight;  // standalone call: the read stays before the writes
   }
-  const layout = dhBlockLayout();
   const block = Math.floor(viewPos / kBlockRows);
   const rowInBlock = viewPos - block * kBlockRows;
-  const targetPx = layout.offsets[block] + rowInBlock * (layout.est / kBlockRows);
-  const max = Math.max(0, layout.total - viewH);
-  log.scrollTop = Math.min(max, Math.max(0, targetPx));  // write LAST
+  const rowsInBlock = Math.min(kBlockRows, dhViewLines.length - block * kBlockRows);
+  for (let pass = 0; pass < 3; pass++) {
+    const layout = dhBlockLayout();
+    const targetPx = layout.offsets[block] + rowInBlock * (layout.heights[block] / rowsInBlock);
+    const max = Math.max(0, layout.total - viewH);
+    dhSetScrollSilently(log, Math.min(max, Math.max(0, targetPx)));
+    dhUpdateWindow();
+    const el = dhMounted.get(block);
+    if (!el) {
+      continue;  // missed by more than the overscan — re-aim from the fresh measurements
+    }
+    const rowEl = el.children[rowInBlock];
+    if (!rowEl) {
+      break;  // defensive: a mounted block always holds all its rows
+    }
+    const delta = rowEl.getBoundingClientRect().top - log.getBoundingClientRect().top;
+    if (Math.abs(delta) >= 1) {
+      dhSetScrollSilently(log, Math.max(0, log.scrollTop + delta));
+      dhUpdateWindow();
+    }
+    break;
+  }
 }
 
 /* Cursor move with wrap: dir < 0 = previous/older, dir > 0 = next/newer
- * (AC4). Inert when idle or when there are no matches (§5.2). One layout
- * read (the viewport height) before any write; highlights and the readout
- * refresh, then the jump writes scrollTop last. */
+ * (AC4). Inert when idle or when there are no matches (§5.2). Highlights
+ * and the readout refresh, then the jump runs its bounded estimate +
+ * correction loop (discrete input only — perf KB). */
 function dhBodySearchStep(dir) {
   const m = dhBodySearch.matches;
   if (dhBodySearch.term === "" || m.length === 0) {
@@ -1100,8 +1090,9 @@ function dhBodySearchPageOrMatch(dir) {
  * model, rebuilds the match state, targets the most recent match, and
  * re-renders: quest index, mounted-row highlights, count readout, then
  * the auto-jump. Unchanged term = no-op (never re-jumps); empty/whitespace
- * term = the full reset to Idle. Reads exactly one layout value (the
- * viewport height) BEFORE any DOM write; scrollTop is written last. */
+ * term = the full reset to Idle. The viewport height is read before the
+ * DOM writes; the jump itself is dhBodySearchJump's bounded correction
+ * loop. */
 function dhBodySearchCommit(raw) {
   const log = document.getElementById("log");
   const viewH = log ? log.clientHeight : 0;  // the only layout read — first
@@ -1116,7 +1107,7 @@ function dhBodySearchCommit(raw) {
   if (term !== "") {
     for (let i = 0; i < dhAllLines.length; i++) {
       const line = dhAllLines[i];
-      if (dhBodySearchRangesFor(line, term).length > 0) {
+      if (dhBodySearchLineMatches(line, term)) {
         dhBodySearch.matches.push(i);
         dhBodySearch.questMatchIds.add(line.questId);
       }
@@ -1553,7 +1544,7 @@ function appendLine(line) {
   // ascending. Count refresh only, NEVER a re-jump (the user may be
   // reading). The dhRenderIndex below re-narrows the quest index.
   if (dhBodySearch.term !== "") {
-    if (dhBodySearchRangesFor(line, dhBodySearch.term).length > 0) {
+    if (dhBodySearchLineMatches(line, dhBodySearch.term)) {
       dhBodySearch.matches.push(dhAllLines.length - 1);
       dhBodySearch.questMatchIds.add(line.questId);
     }
@@ -1583,23 +1574,21 @@ function appendLine(line) {
         dhMountBlock(log, last);
         log.append(dhBottomSpacer);  // keep the spacer the last child
         const el = dhMounted.get(last);
-        const h = el.offsetHeight;
-        if (dhBlockHeights[last] !== 0) {
-          dhBlockSum += h - dhBlockHeights[last];
-        } else {
-          dhBlockSum += h;
-          dhBlockMeasured += 1;
-        }
-        dhBlockHeights[last] = h;
+        // A fresh tail block holds exactly one row: record the height so
+        // totals stay truthful, but NEVER into the running average — a
+        // partial block would poison every unmeasured block's price. The
+        // block joins the average once it fills (the other arm below).
+        dhBlockHeights[last] = el.offsetHeight;
       }
       dhRefreshSpacers();
     } else if (dhMounted.has(last)) {
       const el = dhMounted.get(last);
       el.append(dhMakeRow(line));
       const h = el.offsetHeight;  // the block grew by one row
-      if (dhBlockHeights[last] !== 0) {
-        dhBlockSum += h - dhBlockHeights[last];
-      } else {
+      if (dhViewLines.length >= (last + 1) * kBlockRows) {
+        // The tail just filled: count its full height exactly once. Any
+        // earlier partial measurement was recorded but never summed, so
+        // add h whole — not a delta.
         dhBlockSum += h;
         dhBlockMeasured += 1;
       }

@@ -320,19 +320,20 @@ html, body {
 .line .speaker { color: #7BFF7B; font-weight: bold; }
 .line.player .speaker { color: #FFD866; }
 
-/* Body search highlights (AC2, spec §6.3): gold background, dark text —
- * background only, no layout shift. The current match inverts to dark on
- * gold plus weight, so it differs from a plain hit by more than hue
- * (colorblind safety, spec §6.6). Built by text-node splitting in
- * history.js dhMakeRow (never innerHTML). */
-.dh-hit {
-  background: #FFD866;
-  color: #0A120A;
+/* Body search highlights (AC2, spec §6.3; whole-line ruling 2026-10-18):
+ * the WHOLE row carrying a match gets a gold-tinted background —
+ * background/outline only, no layout shift (a wrap-height change would
+ * fight the C17 block-height accounting; font-weight stays untouched).
+ * The current match deepens the tint and adds an outline, so it differs
+ * from a plain hit by more than hue (colorblind safety, spec §6.6). Row
+ * classes are added by history.js dhMakeRow; row text stays plain
+ * textContent, byte-identical to the unsearched row. */
+.dh-hit-line {
+  background: rgba(255, 216, 102, 0.16);
 }
-.dh-hit-current {
-  background: #0A120A;
-  color: #FFD866;
-  font-weight: bold;
+.dh-hit-line-current {
+  background: rgba(255, 216, 102, 0.35);
+  outline: 1px solid rgba(255, 216, 102, 0.8);
 }
 
 /* Clear history (C5): header button groups with the hint on the right.
