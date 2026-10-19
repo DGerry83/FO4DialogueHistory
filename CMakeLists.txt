@@ -46,6 +46,7 @@ add_library(${PROJECT_NAME} SHARED
 	src/Application/StressTest/StressTestInjector.cpp
 	src/Infrastructure/Hooks/SubtitleHook.cpp
 	src/Infrastructure/Hooks/QuestResolver.cpp
+	src/Infrastructure/Input/GameplayInputGate.cpp
 	src/Infrastructure/Cosave/CosaveStore.cpp
 	src/Infrastructure/Prisma/PrismaViewBridge.cpp
 	src/Infrastructure/Settings/IniSettingsStore.cpp

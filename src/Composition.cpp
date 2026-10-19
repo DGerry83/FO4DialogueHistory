@@ -13,6 +13,7 @@
 #include "Core/Input/GamepadButtonMap.h"
 #include "Infrastructure/Cosave/CosaveStore.h"
 #include "Infrastructure/Hooks/SubtitleHook.h"
+#include "Infrastructure/Input/GameplayInputGate.h"
 #include "Infrastructure/Logging/Log.h"
 #include "Infrastructure/Prisma/PrismaViewBridge.h"
 #include "Infrastructure/Settings/IniSettingsStore.h"
@@ -328,6 +329,14 @@ namespace F4DH
 		static Application::StressTestInjector     stressInjector(buffer, viewController, root.log, root.settings);
 		static Application::HotkeyController       hotkey(root.settings, viewController, stressInjector);
 
+		// #005 C2: gameplay-input gate — the C1 MenuControls swallow cannot
+		// reach PlayerControls user-event consumers, so WASD/camera leaked
+		// while typing. The BSInputEnableManager layer is allocated once here
+		// (game thread, data ready); allocation failure degrades to a no-op
+		// gate, never fatal. ExclusiveTypingInput=0 leaves the gate inert.
+		static Infrastructure::GameplayInputGate   gameplayGate(root.log, root.settings.exclusiveTypingInput);
+		gameplayGate.Initialize();
+
 		// The stress key gets its own match pair, resolved through the same
 		// DIK->VK translation as the panel hotkey and only when configured:
 		// the default 0 (or a duplicate of the panel hotkey) leaves the
@@ -363,6 +372,7 @@ namespace F4DH
 		// #005: the view's typingStateChanged reports (dispatched to the game
 		// thread by the bridge) land on the ViewController flag the sink reads.
 		bridge.SetTypingStateCallback([](bool typing) { viewController.SetTyping(typing); });
+		viewController.SetGameplayInputGate(&gameplayGate);
 		Application::ViewController::SetCloseTarget(&viewController);
 
 		if (const auto menuControls = RE::MenuControls::GetSingleton()) {

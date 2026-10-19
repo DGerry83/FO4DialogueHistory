@@ -9,6 +9,8 @@
 
 namespace F4DH::Application
 {
+	class IGameplayInputGate;
+
 	enum class ViewState : std::uint8_t
 	{
 		Hidden,
@@ -45,8 +47,15 @@ namespace F4DH::Application
 		// #005: the view reports a text input focused/blurred through the
 		// bridge's typingStateChanged listener. Written only from dispatched
 		// game-thread tasks, read only on the game thread — plain bool by
-		// design (documented threading invariant).
-		void SetTyping(bool typing) noexcept { _typing = typing; }
+		// design (documented threading invariant). Typing-active transitions
+		// toggle the gameplay input gate (game thread too, by the same rule).
+		void SetTyping(bool typing) noexcept;
+
+		// Setter injection (no ctor churn); a null gate is a safe no-op. #005:
+		// the gate blocks gameplay user events (movement/camera) while typing
+		// is active — the MenuControls event swallow cannot reach the
+		// PlayerControls user-event consumers.
+		void SetGameplayInputGate(IGameplayInputGate* gate) noexcept { _gameplayGate = gate; }
 
 		// True only while typing AND the panel is open — the open-state guard
 		// is the second stuck-flag net next to the Open()/Close() resets.
@@ -61,5 +70,6 @@ namespace F4DH::Application
 		Core::ILogger&        _logger;
 		ViewState             _state = ViewState::Hidden;
 		bool                  _typing{ false };
+		IGameplayInputGate*   _gameplayGate{ nullptr };  // #005 C2: null until Composition injects; no-op when null
 	};
 }

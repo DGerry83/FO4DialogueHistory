@@ -3,6 +3,7 @@
 #include <format>
 
 #include "Core/Dialogue/PayloadBuilder.h"
+#include "Application/Input/IGameplayInputGate.h"
 
 namespace F4DH::Application
 {
@@ -112,9 +113,29 @@ namespace F4DH::Application
 		}
 	}
 
+	void ViewController::SetTyping(bool typing) noexcept
+	{
+		// #005 C2: toggle the gate on typing-ACTIVE transitions (typing && Open),
+		// not raw typing transitions — inactive->inactive repeats are no-ops and
+		// the gate itself is idempotent besides.
+		const bool wasActive = IsTypingActive();
+		_typing = typing;
+		if (!_gameplayGate || wasActive == IsTypingActive()) {
+			return;
+		}
+		if (IsTypingActive()) {
+			_gameplayGate->BlockGameplayInput();
+		} else {
+			_gameplayGate->UnblockGameplayInput();
+		}
+	}
+
 	void ViewController::Open()
 	{
 		_typing = false;  // #005: authoritative reset — no stale typing state survives a reopen
+		if (_gameplayGate) {
+			_gameplayGate->UnblockGameplayInput();  // #005 C2: stuck-state net, same role as the _typing reset
+		}
 		if (_state == ViewState::Degraded) {
 			return;
 		}
@@ -131,6 +152,9 @@ namespace F4DH::Application
 	void ViewController::Close()
 	{
 		_typing = false;  // #005: authoritative reset — close while typing must not stick the flag
+		if (_gameplayGate) {
+			_gameplayGate->UnblockGameplayInput();  // #005 C2: stuck-state net — close while typing must not stick the block either
+		}
 		_bridge.Unfocus();
 		_bridge.Hide();
 		_state = ViewState::Hidden;
