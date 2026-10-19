@@ -114,6 +114,7 @@ namespace F4DH::Application
 
 	void ViewController::Open()
 	{
+		_typing = false;  // #005: authoritative reset — no stale typing state survives a reopen
 		if (_state == ViewState::Degraded) {
 			return;
 		}
@@ -129,6 +130,7 @@ namespace F4DH::Application
 
 	void ViewController::Close()
 	{
+		_typing = false;  // #005: authoritative reset — close while typing must not stick the flag
 		_bridge.Unfocus();
 		_bridge.Hide();
 		_state = ViewState::Hidden;

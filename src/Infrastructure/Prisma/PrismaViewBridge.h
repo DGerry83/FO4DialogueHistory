@@ -1,5 +1,6 @@
 #pragma once
 
+#include <functional>
 #include <optional>
 
 #include "Application/View/IViewBridge.h"
@@ -32,6 +33,12 @@ namespace F4DH::Infrastructure
 		void SetClearCallbacks(ClearAllCallback allFn, ClearQuestCallback questFn) override;
 		void SetClearQuestsCallback(ClearQuestsCallback questsFn) override;
 		[[nodiscard]] bool IsHealthy() override;
+
+		// #005: the view reports a text input focused ("1") / blurred ("0")
+		// via the typingStateChanged listener; wired by Composition to
+		// ViewController::SetTyping. Invoked on the game thread.
+		using TypingStateCallback = std::function<void(bool)>;
+		void SetTypingStateCallback(TypingStateCallback fn);
 
 		// True only when the runtime exposed IVPrismaUI12 (controller-action
 		// binding); false on the V11 fallback. Hard gate for any V12-only
@@ -88,6 +95,7 @@ namespace F4DH::Infrastructure
 		ClearAllCallback                   _clearAllCallback = nullptr;
 		ClearQuestCallback                 _clearQuestCallback = nullptr;
 		ClearQuestsCallback                _clearQuestsCallback = nullptr;
+		TypingStateCallback                _typingStateCallback;  // #005: empty until Composition wires it
 		int                                _fontSize{ 16 };
 		std::optional<Core::PanelGeometry> _geometry;
 		Core::ViewFilterState              _filters;

@@ -338,6 +338,15 @@ namespace F4DH::Infrastructure
 						REX::LogWarning("IniSettingsStore: invalid GamepadHotkey '{}' — keeping default (disabled)", value);
 					}
 				}
+			} else if (key == "exclusivetypinginput") {
+				if (!ok) {
+					REX::LogWarning("IniSettingsStore: invalid ExclusiveTypingInput '{}' — keeping default 1 (on)", value);
+				} else if (parsed > 1) {
+					settings.exclusiveTypingInput = true;
+					REX::LogWarning("IniSettingsStore: ExclusiveTypingInput {} out of range 0-1 — clamped to 1", parsed);
+				} else {
+					settings.exclusiveTypingInput = parsed == 1;
+				}
 			} else if (key == "buffersize") {
 				if (!ok) {
 					REX::LogWarning("IniSettingsStore: invalid BufferSize '{}' — keeping default 0 (unlimited)", value);

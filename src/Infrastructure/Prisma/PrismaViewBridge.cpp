@@ -39,6 +39,7 @@ namespace F4DH::Infrastructure
 		PrismaViewBridge::ClearAllCallback   g_clearAllCallback{ nullptr };
 		PrismaViewBridge::ClearQuestCallback g_clearQuestCallback{ nullptr };
 		PrismaViewBridge::ClearQuestsCallback g_clearQuestsCallback{ nullptr };
+		PrismaViewBridge::TypingStateCallback g_typingStateCallback;  // #005 mirror
 		std::string                      g_snapshotCache;
 		bool                             g_prismaMissingLogged{ false };
 		bool                             g_createResultLogged{ false };
@@ -177,6 +178,25 @@ namespace F4DH::Infrastructure
 			});
 		}
 
+		void OnTypingStateChanged(const char* a_payload)
+		{
+			// #005: fires on PrismaUI's thread. The payload is exactly "1"
+			// (a view text input focused) or "0" (blurred); validate here like
+			// the other payloads, apply on the game thread — the typing flag
+			// is game-thread state (documented invariant).
+			const std::string payload = a_payload ? a_payload : "";
+			if (payload != "0" && payload != "1") {
+				REX::LogWarning("PrismaViewBridge: ignoring malformed typingStateChanged payload '{}'", payload);
+				return;
+			}
+			const bool typing = payload == "1";
+			Dispatch([typing] {
+				if (g_typingStateCallback) {
+					g_typingStateCallback(typing);
+				}
+			});
+		}
+
 		void OnGeometryChanged(const char* a_json)
 		{
 			// Fires on PrismaUI's thread; parse + persist on the game thread
@@ -230,6 +250,7 @@ namespace F4DH::Infrastructure
 			g_api->RegisterJSListener(a_view, "clearAllRequested", &OnClearAllRequested);
 			g_api->RegisterJSListener(a_view, "clearQuestRequested", &OnClearQuestRequested);
 			g_api->RegisterJSListener(a_view, "clearQuestsRequested", &OnClearQuestsRequested);
+			g_api->RegisterJSListener(a_view, "typingStateChanged", &OnTypingStateChanged);  // #005: text-input focus/blur reports
 			// C7: V12 controller actions (gamepad). Bound only when the runtime
 			// exposed IVPrismaUI12 — on the V11 fallback g_api is a downcast and
 			// these virtuals must never run (ControllerActionsAvailable gates
@@ -461,6 +482,12 @@ namespace F4DH::Infrastructure
 	{
 		_clearQuestsCallback = questsFn;
 		g_clearQuestsCallback = questsFn;
+	}
+
+	void PrismaViewBridge::SetTypingStateCallback(TypingStateCallback fn)
+	{
+		_typingStateCallback = fn;
+		g_typingStateCallback = fn;
 	}
 
 	void PrismaViewBridge::SetFontSize(int fontSize) noexcept

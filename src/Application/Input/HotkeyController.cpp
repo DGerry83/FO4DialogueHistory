@@ -24,4 +24,9 @@ namespace F4DH::Application
 	{
 		_viewController.Toggle();
 	}
+
+	bool HotkeyController::IsTypingActive() const
+	{
+		return _viewController.IsTypingActive();
+	}
 }

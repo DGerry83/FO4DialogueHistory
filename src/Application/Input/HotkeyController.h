@@ -22,6 +22,11 @@ namespace F4DH::Application
 			// argument). Same toggle path as OnKeyDown's hotkey branch.
 			void OnGamepadButton();
 
+			// #005: true while a panel text input owns typing (and the panel
+			// is open) — the input sink gates its keyboard routing and
+			// consumption on this. Forwards to the ViewController.
+			[[nodiscard]] bool IsTypingActive() const;
+
 		private:
 			const Settings&     _settings;
 			ViewController&     _viewController;

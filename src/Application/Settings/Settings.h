@@ -18,6 +18,7 @@ namespace F4DH::Application
 	{
 		std::uint32_t hotkeyScanCode = 35;  // [Settings] Hotkey as a DIK scan code (INI accepts key names; Core::ParseScanCode resolves them). Default DIK_H
 		Core::GamepadHotkeyBinding gamepadHotkey{};  // [Settings] GamepadHotkey: gamepad button/chord that toggles the view (INI accepts names + chords; Core::ParseGamepadHotkey parses). Empty/absent = disabled
+		bool          exclusiveTypingInput = true;  // [Settings] ExclusiveTypingInput: consume keyboard ButtonEvents (handled=kStop) while a panel text input is focused; 0 disables ONLY the consumption — the panel hotkey stays suppressed while typing either way
 		std::size_t   bufferSize = 0;       // 0 = unlimited (no eviction); >0 caps, range 10–500
 		int           fontSize = 16;        // range 10–32 (px)
 		bool          verboseCapture = false;  // [Diagnostics] VerboseCapture: log every subtitle event at Information level

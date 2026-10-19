@@ -42,6 +42,16 @@ namespace F4DH::Application
 
 		[[nodiscard]] ViewState State() const { return _state; }
 
+		// #005: the view reports a text input focused/blurred through the
+		// bridge's typingStateChanged listener. Written only from dispatched
+		// game-thread tasks, read only on the game thread — plain bool by
+		// design (documented threading invariant).
+		void SetTyping(bool typing) noexcept { _typing = typing; }
+
+		// True only while typing AND the panel is open — the open-state guard
+		// is the second stuck-flag net next to the Open()/Close() resets.
+		[[nodiscard]] bool IsTypingActive() const { return _typing && _state == ViewState::Open; }
+
 	private:
 		void Open();
 		void Close();
@@ -50,5 +60,6 @@ namespace F4DH::Application
 		IViewBridge&          _bridge;
 		Core::ILogger&        _logger;
 		ViewState             _state = ViewState::Hidden;
+		bool                  _typing{ false };
 	};
 }

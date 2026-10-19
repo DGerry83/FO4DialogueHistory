@@ -129,15 +129,16 @@ namespace F4DH
 			return { vk, 0 };
 		}
 
-		// Edge-triggered keyboard router for the panel hotkey. Appended to
-		// MenuControls::handlers for the process lifetime (never removed;
-		// F4SE plugins never unload).
+		// Edge-triggered keyboard router for the panel hotkey. Inserted at the
+		// FRONT of MenuControls::handlers (#005: typing-scoped kStop consumption
+		// must run ahead of vanilla handlers and later plugins) for the process
+		// lifetime (never removed; F4SE plugins never unload).
 		class InputSink final : public RE::BSInputEventUser
 		{
 		public:
 			InputSink(Application::HotkeyController& hotkey, Core::ILogger& log, MatchPair a_match, std::uint32_t a_configuredScanCode,
 				MatchPair a_stressMatch = { 0, 0 }, std::uint32_t a_stressScanCode = 0, bool a_probe = false,
-				Core::GamepadHotkeyBinding a_gpBinding = {}) :
+				Core::GamepadHotkeyBinding a_gpBinding = {}, bool a_exclusiveTyping = true) :
 				_hotkey(hotkey),
 				_log(log),
 				_match(a_match),
@@ -145,7 +146,8 @@ namespace F4DH
 				_stressMatch(a_stressMatch),
 				_stressScanCode(a_stressScanCode),
 				_probe(a_probe),
-				_gpBinding(a_gpBinding)
+				_gpBinding(a_gpBinding),
+				_exclusiveTyping(a_exclusiveTyping)
 			{}
 
 			// The dispatcher consults this before delivering; the base
@@ -220,7 +222,33 @@ namespace F4DH
 
 				const auto code = static_cast<std::uint32_t>(a_event->QIDCode());
 
-				if (a_event->device != RE::INPUT_DEVICE::kKeyboard || !a_event->QJustPressed()) {
+				if (a_event->device != RE::INPUT_DEVICE::kKeyboard) {
+					return;
+				}
+
+				// #005: while a view text input owns typing, every keyboard
+				// ButtonEvent is captive — our own hotkey/stress routing is
+				// suppressed (always; typing an 'H' must not close the panel),
+				// and with [Settings] ExclusiveTypingInput=1 the event is
+				// consumed (handled=kStop) for every handler after us — press
+				// AND release alike, so no stuck-key states. `handled` is a
+				// writable engine field (PrismaUI sets kStop from its own
+				// MenuControls sink for gamepad events); the sink signature is
+				// const, hence the cast. When NOT typing this branch never runs
+				// and behavior is byte-identical to before.
+				if (_hotkey.IsTypingActive()) {
+					if (_exclusiveTyping) {
+						const_cast<RE::ButtonEvent*>(a_event)->handled = RE::InputEvent::HANDLED_RESULT::kStop;
+					}
+					if (_probe) {
+						_log.Info(std::format("input probe: key {} code {} (0x{:X}) [suppressed: typing]",
+							a_event->QJustPressed() ? "press" : (a_event->QReleased() ? "release" : "hold"),
+							code, code));
+					}
+					return;
+				}
+
+				if (!a_event->QJustPressed()) {
 					return;
 				}
 				// C11: on OG the engine code is a VK (translated at init into
@@ -262,6 +290,7 @@ namespace F4DH
 			std::uint32_t                  _stressScanCode;      // always DIK (INI value)
 			bool                           _probe{ false };      // [Diagnostics] KeyProbe
 			Core::GamepadHotkeyBinding     _gpBinding{};         // C4: parsed [Settings] GamepadHotkey; enabled=false = unconfigured
+			bool                           _exclusiveTyping{ true };  // #005: [Settings] ExclusiveTypingInput — gates ONLY the kStop consumption, never the own-hotkey suppression
 			bool                           _gpModifierHeld{ false };  // C4: chord modifier held, tracked from press/release edges
 			bool                           _loggedFirstEvent{ false };
 		};
@@ -325,20 +354,25 @@ namespace F4DH
 					Core::GamepadButtonName(gpBinding.modifier), Core::GamepadButtonName(gpBinding.trigger)));
 			}
 		}
-		static InputSink                           inputSink(hotkey, root.log, matchCode, root.settings.hotkeyScanCode, stressMatchCode, stressScanCode, root.settings.keyProbe, gpBinding);
+		static InputSink                           inputSink(hotkey, root.log, matchCode, root.settings.hotkeyScanCode, stressMatchCode, stressScanCode, root.settings.keyProbe, gpBinding, root.settings.exclusiveTypingInput);
 
 		bridge.SetFontSize(root.settings.fontSize);
 		bridge.SetGeometry(root.settings.panelGeometry);
 		bridge.SetFilters(root.settings.viewFilters);
 		bridge.SetSettingsSink(&settingsStore);
+		// #005: the view's typingStateChanged reports (dispatched to the game
+		// thread by the bridge) land on the ViewController flag the sink reads.
+		bridge.SetTypingStateCallback([](bool typing) { viewController.SetTyping(typing); });
 		Application::ViewController::SetCloseTarget(&viewController);
 
 		if (const auto menuControls = RE::MenuControls::GetSingleton()) {
 			// The AV fork exposes no RegisterHandler engine wrapper; the
-			// handlers array is the registration point. Appended for the
-			// process lifetime (no removal — F4SE plugins never unload).
-			menuControls->handlers.push_back(&inputSink);
-			root.log.Info("hotkey input sink registered");
+			// handlers array is the registration point. Inserted at the FRONT
+			// (#005: the typing-scoped kStop consumption must run ahead of
+			// vanilla handlers and later plugins) for the process lifetime
+			// (no removal — F4SE plugins never unload).
+			menuControls->handlers.insert(menuControls->handlers.begin(), &inputSink);
+			root.log.Info("hotkey input sink registered (front of handler chain)");
 		} else {
 			root.log.Error("MenuControls unavailable — panel hotkey disabled");
 		}

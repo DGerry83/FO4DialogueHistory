@@ -20,6 +20,9 @@
  *                 "<decimal questId>") / window.clearQuestsRequested(
  *                 "<decimal questId,decimal questId,...>") on confirmed
  *                 clear (C5, #003)
+ *               window.typingStateChanged("1"/"0") when a text box
+ *                 (#search/#bodysearch) gains/loses focus (#005: the plugin
+ *                 consumes keyboard ButtonEvents while typing)
  * Keyboard surface (C6): one document-level keydown handler — Esc clears
  * a focused non-empty search box first, else closes (overlay up: dismiss
  * only); arrows/Enter/Space/PageUp-Down drive a roving focus model (zones
@@ -1607,13 +1610,28 @@ function setFontSize(size) {
   dhInvalidateHeights();  // C17: row heights changed — re-estimate + re-anchor
 }
 
-function dhSend(eventName) {
+function dhSend(eventName, payload) {
   const fn = window[eventName];
   if (typeof fn === "function") {
-    fn("");
+    fn(payload === undefined ? "" : payload);
   } else {
     console.warn("[DialogueHistory] listener not registered: " + eventName);
   }
+}
+
+/* #005 — input exclusivity while typing: the plugin needs to know when a
+ * text box owns keystrokes so its input sink can consume keyboard
+ * ButtonEvents before they bleed to the game (FO4 builds them from polled
+ * key state, so PrismaUI cannot starve them itself). DOM-level focus/blur
+ * listeners cover BOTH focus paths with one hook each — the C6 zone model
+ * (dhFocusApply calls el.focus()/blur()) and mouse clicks — and browsers
+ * don't refire focus on an already-focused box, so a zone re-apply while
+ * the box stays focused emits nothing. Payload is exactly "1" (focused) /
+ * "0" (blurred); old DLLs simply never register the listener (dhSend
+ * guards the call). */
+function dhWireTypingEmit(el) {
+  el.addEventListener("focus", function () { dhSend("typingStateChanged", "1"); });
+  el.addEventListener("blur", function () { dhSend("typingStateChanged", "0"); });
 }
 
 /* Clear history (C5/#003): one selection-scoped path. The Clear button opens
@@ -2334,6 +2352,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const search = document.getElementById("search");
   if (search) {
     search.addEventListener("input", dhRenderIndex);
+    dhWireTypingEmit(search);  // #005: report focus/blur to the plugin
   }
   /* Body search bar (Chunk B): the input carries the debounced commit +
    * Enter/Shift+Enter navigation via dhBodySearchWireInput; the ‹ ›
@@ -2342,6 +2361,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const bodySearch = document.getElementById("bodysearch");
   if (bodySearch) {
     dhBodySearchWireInput(bodySearch);
+    dhWireTypingEmit(bodySearch);  // #005: report focus/blur to the plugin
   }
   const bodySearchPrev = document.getElementById("bodysearchprev");
   if (bodySearchPrev) {
