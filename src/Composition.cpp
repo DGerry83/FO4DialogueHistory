@@ -364,6 +364,15 @@ namespace F4DH
 				root.log.Info(std::format("input: gamepad hotkey bound: {}+{}",
 					Core::GamepadButtonName(gpBinding.modifier), Core::GamepadButtonName(gpBinding.trigger)));
 			}
+			// RB (0x0200) and RT (0x000A) are never delivered as ButtonEvents on
+			// the MenuControls chain (runtime-observed 2026-10-19, OG 1.10.163 —
+			// their in-game actions fire, so the engine reads them outside the
+			// event stream). A binding using either can never fire — warn loudly.
+			constexpr std::uint16_t kUndeliveredRB{ 0x0200 }, kUndeliveredRT{ 0x000A };
+			if (gpBinding.trigger == kUndeliveredRB || gpBinding.trigger == kUndeliveredRT ||
+				gpBinding.modifier == kUndeliveredRB || gpBinding.modifier == kUndeliveredRT) {
+				root.log.Warn("input: gamepad hotkey uses RB/RT — the engine never delivers those as button events, the binding will NOT fire; pick another button");
+			}
 		}
 		static InputSink                           inputSink(hotkey, root.log, matchCode, root.settings.hotkeyScanCode, stressMatchCode, stressScanCode, root.settings.keyProbe, gpBinding, root.settings.exclusiveTypingInput);
 
