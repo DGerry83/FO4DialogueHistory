@@ -103,9 +103,9 @@ namespace F4DH
 			std::uint32_t secondary;
 		};
 
-		// "No chord modifier" sentinel from Core::GamepadButtonMap (modifier
-		// holds 0xFF when the binding is a single button — 0 is DUp, valid).
-		constexpr std::uint8_t kNoGamepadModifier{ 0xFF };
+		// "No chord modifier" sentinel from Core::GamepadButtonMap (0 — no
+		// gamepad button is coded 0 in the XInput-mask code space).
+		constexpr std::uint16_t kNoGamepadModifier{ Core::kNoGamepadButton };
 
 		// The engine delivers Windows virtual-key codes in ButtonEvent.keyMask
 		// on every desktop runtime — OG confirmed by the C10 diagnostic dumps,
@@ -178,16 +178,18 @@ namespace F4DH
 				}
 
 				// C1: KeyProbe gamepad probe — log one line per delivered
-				// gamepad button event (device-local idCode per the CHUNK_MAP
-				// table, analog value, hold time, press state). Never consumed,
-				// never matched against the keyboard hotkey/stress pairs.
+				// gamepad button event (idCode = XInput bit mask, LT/RT on
+				// F4SE's 0x09/0x0A; decoded name appended), analog value,
+				// hold time, press state. Never consumed, never matched
+				// against the keyboard hotkey/stress pairs.
 				if (a_event->device == RE::INPUT_DEVICE::kGamepad) {
 					if (_probe) {
 						const auto idCode = static_cast<std::uint32_t>(a_event->QIDCode());
 						const char* state = a_event->QJustPressed() ? "pressed" :
 							(a_event->QReleased() ? "released" : "held");
-						_log.Info(std::format("input probe: gamepad button idCode {} (0x{:X}) value {:.2f} held {:.2f}s state {}",
-							idCode, idCode, a_event->value, a_event->heldDownSecs, state));
+						_log.Info(std::format("input probe: gamepad button idCode {} (0x{:X}) [{}] value {:.2f} held {:.2f}s state {}",
+							idCode, idCode, Core::GamepadButtonName(static_cast<std::uint16_t>(idCode & 0xFFFF)),
+							a_event->value, a_event->heldDownSecs, state));
 					}
 
 					// C4: gamepad hotkey routing — only when a binding is

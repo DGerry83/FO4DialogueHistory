@@ -4,20 +4,23 @@
 
 namespace
 {
-	// Sentinel for "no chord modifier". Must stay outside the 0-15 button
-	// code space (0xFF is never a valid button).
-	constexpr std::uint8_t kNoButton{ 0xFF };
+	struct ButtonEntry
+	{
+		std::string_view name;
+		std::uint16_t    code;
+	};
 
 	constexpr std::size_t kButtonCount{ 16 };
 
-	// Canonical names indexed by device-local button code. This table is
-	// the single source of truth for both parsing and GamepadButtonName.
-	constexpr std::string_view kButtonNames[kButtonCount]{
-		"DUp", "DDown", "DLeft", "DRight",
-		"Start", "Back",
-		"LS", "RS", "LB", "RB",
-		"A", "B", "X", "Y",
-		"LT", "RT",
+	// Canonical name -> engine idCode (XInput bit mask; LT/RT are F4SE's
+	// special codes 0x09/0x0A). This table is the single source of truth
+	// for both parsing and GamepadButtonName.
+	constexpr ButtonEntry kButtons[kButtonCount]{
+		{ "DUp", 0x0001 }, { "DDown", 0x0002 }, { "DLeft", 0x0004 }, { "DRight", 0x0008 },
+		{ "Start", 0x0010 }, { "Back", 0x0020 },
+		{ "LS", 0x0040 }, { "RS", 0x0080 }, { "LB", 0x0100 }, { "RB", 0x0200 },
+		{ "A", 0x1000 }, { "B", 0x2000 }, { "X", 0x4000 }, { "Y", 0x8000 },
+		{ "LT", 0x0009 }, { "RT", 0x000A },
 	};
 
 	[[nodiscard]] std::string_view Trim(std::string_view a_value) noexcept
@@ -50,17 +53,28 @@ namespace
 		return true;
 	}
 
-	// Name -> device-local button code. Returns kNoButton for anything that
+	// Name -> engine button code. Returns kNoGamepadButton for anything that
 	// is not a canonical button name (including numerics — the numeric
 	// schema is only accepted as a whole value by ParseGamepadHotkey).
-	[[nodiscard]] std::uint8_t ParseButtonName(std::string_view a_name) noexcept
+	[[nodiscard]] std::uint16_t ParseButtonName(std::string_view a_name) noexcept
 	{
-		for (std::size_t i = 0; i < kButtonCount; ++i) {
-			if (EqualsIgnoreCase(kButtonNames[i], a_name)) {
-				return static_cast<std::uint8_t>(i);
+		for (const auto& button : kButtons) {
+			if (EqualsIgnoreCase(button.name, a_name)) {
+				return button.code;
 			}
 		}
-		return kNoButton;
+		return F4DH::Core::kNoGamepadButton;
+	}
+
+	// Code -> canonical name; kNoGamepadButton when the code is unknown.
+	[[nodiscard]] std::uint16_t KnownButtonCode(std::uint32_t a_code) noexcept
+	{
+		for (const auto& button : kButtons) {
+			if (button.code == a_code) {
+				return button.code;
+			}
+		}
+		return F4DH::Core::kNoGamepadButton;
 	}
 }
 
@@ -68,7 +82,7 @@ namespace F4DH::Core
 {
 	GamepadHotkeyBinding ParseGamepadHotkey(std::string_view a_value) noexcept
 	{
-		constexpr GamepadHotkeyBinding kInvalid{ 0, kNoButton, false };
+		constexpr GamepadHotkeyBinding kInvalid{ kNoGamepadButton, kNoGamepadButton, false };
 
 		a_value = Trim(a_value);
 		if (a_value.empty()) {
@@ -77,23 +91,27 @@ namespace F4DH::Core
 
 		const auto plus = a_value.find('+');
 		if (plus == std::string_view::npos) {
-			// Single-button path: a bare decimal code 0-15 (the original
-			// numeric schema) or a canonical name.
+			// Single-button path: a bare decimal code, accepted only when it
+			// exactly equals one of the 16 known masks, or a canonical name.
 			if (a_value.find_first_not_of("0123456789") == std::string_view::npos) {
-				int code = 0;
+				std::uint32_t code = 0;
 				const auto* const first = a_value.data();
 				const auto* const last = first + a_value.size();
 				const auto result = std::from_chars(first, last, code, 10);
-				if (result.ec != std::errc{} || result.ptr != last || code > 15) {
+				if (result.ec != std::errc{} || result.ptr != last) {
 					return kInvalid;
 				}
-				return { static_cast<std::uint8_t>(code), kNoButton, true };
+				const auto known = KnownButtonCode(code);
+				if (known == kNoGamepadButton) {
+					return kInvalid;
+				}
+				return { known, kNoGamepadButton, true };
 			}
 			const auto trigger = ParseButtonName(a_value);
-			if (trigger == kNoButton) {
+			if (trigger == kNoGamepadButton) {
 				return kInvalid;
 			}
-			return { trigger, kNoButton, true };
+			return { trigger, kNoGamepadButton, true };
 		}
 
 		// Chord path: exactly one '+', both parts named buttons, and the
@@ -103,16 +121,18 @@ namespace F4DH::Core
 		}
 		const auto modifier = ParseButtonName(Trim(a_value.substr(0, plus)));
 		const auto trigger = ParseButtonName(Trim(a_value.substr(plus + 1)));
-		if (modifier == kNoButton || trigger == kNoButton || modifier == trigger) {
+		if (modifier == kNoGamepadButton || trigger == kNoGamepadButton || modifier == trigger) {
 			return kInvalid;
 		}
 		return { trigger, modifier, true };
 	}
 
-	std::string_view GamepadButtonName(std::uint8_t a_code) noexcept
+	std::string_view GamepadButtonName(std::uint16_t a_code) noexcept
 	{
-		if (a_code < kButtonCount) {
-			return kButtonNames[a_code];
+		for (const auto& button : kButtons) {
+			if (button.code == a_code) {
+				return button.name;
+			}
 		}
 		return "?";
 	}
