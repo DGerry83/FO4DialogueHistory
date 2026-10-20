@@ -2,11 +2,13 @@
 
 A Fallout 4 mod that records and stores dialogue history so you can read it later.  By pulling the subtitles directly, FO4 Dialogue History ensures the history contains what was actually said, all without needing subtitles to be enabled in the options menu.
 
-## How to use/Features
+## How to use & Features
 
 The default hotkey is 'H', just press it and the window will open with a fairly straightforward interface.  Filter the dialogue by clicking on a quest on the left pane, or choose "all" to see all past dialogue at once. The "clear" button respects your selection on the left pane, so you can erase individual quest logs or the entire dialogue history.  The top of the window has checkboxes to allow you to filter quest categories:  Main, Side, Misc, and "Unattributed".  The panel is fully resizable/draggable and remembers its size/position between sessions.
 
 Not *all* dialogue is captured.  Random NPC lines that get spoken as you're walking around for ambience are intentionally not recorded.  Some player opening lines for dialogue are also not recorded, and where this happens it's because the dialogue lines are assigned to a generic "player lines" quest.
+
+The search above the right panel allows you to search the entire Dialogue History body of text.  Results will both filter the quest list so that only quests containing the searched term are shown, and the dialogue lines containing the term will be highlighted.  A total count will also be shown with arrow buttons for moving forward/back through the list of found results.
 
 The INI file (FO4 Dialogue History\F4SE\Plugins\FO4DialogueHistory.ini) contains a few settings you can customize:
 
@@ -16,6 +18,7 @@ The INI file (FO4 Dialogue History\F4SE\Plugins\FO4DialogueHistory.ini) contains
 - VerboseCapture will write extra data about every line being detected including ones that are rejected from capture(you probably don't need to turn this on, but if you're seeing dialogue ending up in the wrong place, not being captured when it should or vice versa, this option will generate the diagnostic logging necessary to figure out what's going on)
 - StressTestKey sets the hotkey for firing off the "stress test", which was really just for me to verify that the mod could handle having thousands of lines in the history.  StressTestLines and StressTestQuests do what they say.
 
+Controller support has been added.  Please note that I do not play with a controller so I did my best at making it feel "right" to navigate.  I'm open to feedback on any changes or improvements I could make.  The ini file provides space for setting the default controller hotkey/button combo.
 
 ## Technical info
 
@@ -29,7 +32,7 @@ You can uninstall simply by disabling and removing the mod, however the cosave d
 
 ## Requirements
 
-- Fallout 4 (1.10.163 or next-gen 1.10.984+) - I've tested on 1.10.163, but the project was built using the "All Versions" fork of CommonLibF4 - https://github.com/LucaDotGit/CommonLibF4 - and so it *should* work on later versions as well.
+- Fallout 4 (OG 1.10.163, NG, or AE 1.11.240) - Tested on 1.10.163 and 1.11.240, NG should work but please report if it does not.
 - F4SE (the correct version for YOUR game install)
 - Address Library for F4SE
 - PrismaUI F4 ≥ 2.2.1.1
