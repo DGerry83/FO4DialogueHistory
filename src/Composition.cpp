@@ -201,6 +201,16 @@ namespace F4DH
 					// only, and only while the modifier is held when a chord
 					// is configured. Never sets `handled` — vanilla bindings
 					// (VATS, favorites, ...) keep working.
+					//
+					// #007 (2026-10-19): the chord is OPEN-ONLY. While the panel
+					// is open the view owns the controller (B / Start close) and
+					// PrismaUI's V12 action capture swallows action-bound buttons
+					// (LB/RB/X/Y/LT/RT/Start) above the MenuControls dispatch —
+					// runtime-observed: LB's release edge never arrived once the
+					// panel took focus, the held flag stuck true, and D-pad
+					// navigation then fired the chord. Matching is suspended
+					// while open and the held flag resets on every fire, so a
+					// swallowed edge can never invert the state.
 					if (_gpBinding.enabled) {
 						const auto idCode = static_cast<std::uint32_t>(a_event->QIDCode());
 						if (_gpBinding.modifier != kNoGamepadModifier && idCode == _gpBinding.modifier) {
@@ -209,12 +219,14 @@ namespace F4DH
 							return;
 						}
 						if (idCode == _gpBinding.trigger && a_event->QJustPressed() &&
+							!_hotkey.IsPanelOpen() &&
 							(_gpBinding.modifier == kNoGamepadModifier || _gpModifierHeld)) {
+							_gpModifierHeld = false;  // #007: a swallowed modifier release must not outlive the open
 							if (_gpBinding.modifier == kNoGamepadModifier) {
-								_log.Info(std::format("input: gamepad hotkey matched ({}), toggling panel",
+								_log.Info(std::format("input: gamepad hotkey matched ({}), opening panel",
 									Core::GamepadButtonName(_gpBinding.trigger)));
 							} else {
-								_log.Info(std::format("input: gamepad hotkey matched ({}+{}), toggling panel",
+								_log.Info(std::format("input: gamepad hotkey matched ({}+{}), opening panel",
 									Core::GamepadButtonName(_gpBinding.modifier), Core::GamepadButtonName(_gpBinding.trigger)));
 							}
 							_hotkey.OnGamepadButton();

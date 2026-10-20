@@ -27,6 +27,13 @@ namespace F4DH::Application
 			// consumption on this. Forwards to the ViewController.
 			[[nodiscard]] bool IsTypingActive() const;
 
+			// #007: true while the panel is open — the input sink suspends
+			// gamepad chord matching then (the view owns the controller: B /
+			// Start close; PrismaUI's V12 action capture swallows modifier
+			// edges while focused, so edge-tracked chord state is unreliable
+			// and the modifier button is overloaded with view actions).
+			[[nodiscard]] bool IsPanelOpen() const;
+
 		private:
 			const Settings&     _settings;
 			ViewController&     _viewController;

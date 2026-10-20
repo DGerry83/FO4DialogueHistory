@@ -29,4 +29,9 @@ namespace F4DH::Application
 	{
 		return _viewController.IsTypingActive();
 	}
+
+	bool HotkeyController::IsPanelOpen() const
+	{
+		return _viewController.State() == ViewState::Open;
+	}
 }
