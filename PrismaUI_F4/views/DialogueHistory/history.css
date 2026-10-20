@@ -452,18 +452,17 @@ html, body {
  * focus model). Deliberately a separate class from .qentry.active (which
  * means selection): an outline ring in the Pip-Boy green — outline takes
  * no layout space, so focus moves never shift rows or force a reflow.
- * Only #search needs the border treatment (its :focus style already
- * hides the outline). */
+ * #007: the text boxes get the same outline ring as every other zone —
+ * the old border-color-only signal (their :focus styles hide the outline)
+ * was nearly invisible. */
 .dh-focus {
   outline: 2px solid #7BFF7B;
   outline-offset: -2px;
 }
-#search.dh-focus {
-  outline: none;
-  border-color: #7BFF7B;  /* same signal as :focus, model-driven */
-}
+#search.dh-focus,
 #bodysearch.dh-focus {
-  outline: none;
+  outline: 2px solid #7BFF7B;
+  outline-offset: -2px;
   border-color: #7BFF7B;  /* same signal as :focus, model-driven */
 }
 .qentry.dh-focus {

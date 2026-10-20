@@ -24,17 +24,21 @@
  *                 (#search/#bodysearch) gains/loses focus (#005: the plugin
  *                 consumes keyboard ButtonEvents while typing)
  * Keyboard surface (C6): one document-level keydown handler — Esc clears
- * a focused non-empty search box first, else closes (overlay up: dismiss
- * only); arrows/Enter/Space/PageUp-Down drive a roving focus model (zones
+ * a focused non-empty search box first, leaves a focused empty box
+ * (#007: search -> filters, bodysearch -> log), else closes (overlay up:
+ * dismiss only); arrows/Enter/Space/PageUp-Down drive a roving focus
+ * model (zones
  * search -> filters -> quests -> bodysearch -> log -> clear; Left/Right
- * cycle with wrap, Up/Down move within a zone and across zones
+ * cycle with wrap — caret keys while a text box is non-empty, zone cycle
+ * when it is empty (#007) — Up/Down move within a zone and across zones
  * at edges, Enter/Space activate; the clear-confirm overlay traps focus,
  * starting on Cancel). PrismaUI's legacy controller conversion
- * (D-pad -> arrows, A -> Enter, B -> Escape) rides the same events, so
+ * (D-pad -> arrows, B -> Escape) rides the same events, so
  * this is also the controller navigation layer. C7 controller actions
  * call dhFocusCycleZone/dhFocusMove/dhFocusActivate/dhFocusPageScroll/
  * dhFocusJumpLog — never raw DOM.
- * Controller actions (C7): the plugin binds X/Y/LB/RB/LT/RT/Start through
+ * Controller actions (C7): the plugin binds A/X/Y/LB/RB/LT/RT/Start
+ * through
  * the V12 BindControllerAction API (only when PrismaUI exposes V12);
  * PrismaUI re-dispatches them as the window event
  * 'prisma-controller-action' with detail {action, button, state:
@@ -47,9 +51,12 @@
  * dhFocus* scroll surface (body search: while a term is active,
  * page_up/page_down WALK MATCHES via dhBodySearchPageOrMatch instead of
  * paging; a cleared term restores paging); close mirrors Esc exactly
- * (overlay up: dismiss only; else closeRequested). A/B/D-pad never
- * arrive here — they stay on the legacy synthetic-key route the focus
- * model consumes.
+ * (overlay up: dismiss only; else closeRequested). activate = A bound as
+ * a V12 action (#007/#010 — VirtualPointer would otherwise hijack A into
+ * a click at the cursor; bound actions are evaluated first): it calls
+ * dhFocusActivate, except while a text box owns DOM focus (typing). B
+ * and the D-pad never arrive here — they stay on the legacy
+ * synthetic-key route the focus model consumes.
  * Device-aware hints (C8): the plugin pushes the active input device via
  * setInputDevice({"gamepad":bool}) from OnDomReady and every Focus/re-open
  * (V12 runtimes only; V11 fallback and old DLLs are never pushed). PrismaUI
@@ -1778,6 +1785,15 @@ function dhOnControllerAction(event) {
     dhFocusJumpLog(false);
   } else if (action === "jump_newest") {
     dhFocusJumpLog(true);
+  } else if (action === "activate") {
+    // #007/#010: A is a V12 action (VirtualPointer would hijack it into a
+    // click at the cursor). Typing owns a focused text box — activating
+    // there would blur it (search Enter semantics), so A stays inert.
+    const active = document.activeElement;
+    if (active && (active.id === "search" || active.id === "bodysearch")) {
+      return;
+    }
+    dhFocusActivate();
   } else if (action === "close") {
     if (dhOverlayVisible()) {
       dhHideClearOverlay();  // dismiss only; the panel stays open
@@ -1788,7 +1804,8 @@ function dhOnControllerAction(event) {
 }
 
 /* C6 — keyboard/controller focus model (roving zones). PrismaUI's legacy
- * controller conversion (D-pad -> arrows, A -> Enter, B -> Escape) rides
+ * controller conversion (D-pad -> arrows, B -> Escape — A is a bound V12
+ * action, #007/#010) rides
  * the same keydown events, so this model is the whole in-menu navigation
  * layer for keyboard and controller alike. Zones cycle in the contract
  * order (D2, body search added per spec §6.1): search -> filters -> quests
@@ -2157,6 +2174,13 @@ function dhFocusOnKey(event) {
   }
   if (left || right) {
     if (dhFocusZone === "search" || dhFocusZone === "bodysearch") {
+      const box = document.getElementById(dhFocusZone);
+      if (box && !box.value) {
+        // #007: empty box — nothing to caret over, so Left/Right leave the
+        // zone; a non-empty box keeps them as caret keys (typing UX)
+        event.preventDefault();
+        dhFocusCycleZone(right ? 1 : -1);
+      }
       return true;  // D3: caret keys — no preventDefault, default caret move
     }
     event.preventDefault();
@@ -2423,8 +2447,10 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
       }
       // Esc chain (AC5, invariant 6): a focused NON-EMPTY search box
-      // clears FIRST and the panel stays open; the second Esc (box now
-      // empty) falls through to close. Overlay dismiss stays above both.
+      // clears FIRST and the panel stays open; a focused EMPTY box leaves
+      // the text zone (#007 — where Down would land: search -> filters,
+      // bodysearch -> log); only then does Esc close. Overlay dismiss
+      // stays above all three.
       const target = event.target;
       if (target && target.id === "bodysearch" && target.value) {
         dhBodySearchClear();  // clears term + box + count; LB/RB revert
@@ -2433,6 +2459,10 @@ document.addEventListener("DOMContentLoaded", () => {
       if (target && target.id === "search" && target.value) {
         target.value = "";  // symmetric clear for the quest-name box
         dhRenderIndex();
+        return;
+      }
+      if (target && (target.id === "search" || target.id === "bodysearch")) {
+        dhFocusSetZone(target.id === "search" ? "filters" : "log");  // blurs the box
         return;
       }
       dhSend("closeRequested");

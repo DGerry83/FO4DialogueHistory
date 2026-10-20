@@ -254,12 +254,17 @@ namespace F4DH::Infrastructure
 			// C7: V12 controller actions (gamepad). Bound only when the runtime
 			// exposed IVPrismaUI12 — on the V11 fallback g_api is a downcast and
 			// these virtuals must never run (ControllerActionsAvailable gates
-			// them). A/B/D-pad are deliberately NOT bound: they stay on the
-			// legacy synthetic-key route (D-pad -> arrows, A -> Enter, B ->
-			// Escape) that the C6 focus model consumes. LT/RT hysteresis is the
+			// them). B/D-pad are deliberately NOT bound: they stay on the
+			// legacy synthetic-key route (D-pad -> arrows, B -> Escape) that the
+			// C6 focus model consumes. A MUST be bound (#007/#010): PrismaUI's
+			// VirtualPointer intercepts A before the legacy A -> Enter
+			// conversion and clicks at the cursor, while bound V12 actions are
+			// evaluated first (ControllerGlyphs routing order) — so only a
+			// binding makes A reach the view. LT/RT hysteresis is the
 			// framework's own (press >= 0.55, release <= 0.45).
 			if (g_bridge && g_bridge->ControllerActionsAvailable()) {
 				constexpr std::pair<const char*, const char*> kControllerActions[] = {
+					{ "A", "activate" },
 					{ "X", "clear_quest" },
 					{ "Y", "clear_all" },
 					{ "LB", "page_up" },
