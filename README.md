@@ -4,7 +4,9 @@ A Fallout 4 mod that records and stores dialogue history so you can read it late
 
 ## How to use & Features
 
-The default hotkey is 'H', just press it and the window will open with a fairly straightforward interface.  Filter the dialogue by clicking on a quest on the left pane, or choose "all" to see all past dialogue at once. The "clear" button respects your selection on the left pane, so you can erase individual quest logs or the entire dialogue history.  The top of the window has checkboxes to allow you to filter quest categories:  Main, Side, Misc, and "Unattributed".  The panel is fully resizable/draggable and remembers its size/position between sessions.
+The default hotkey is 'H', just press it and the window will open with a fairly straightforward interface. The panel has two tabs: **Dialogue History** and **Message History**. Filter the dialogue by clicking on a quest on the left pane, or choose "all" to see all past dialogue at once. The "clear" button respects your selection on the left pane, so you can erase individual quest logs or the entire dialogue history.  The top of the window has checkboxes to allow you to filter quest categories:  Main, Side, Misc, and "Unattributed".  The panel is fully resizable/draggable and remembers its size/position between sessions.
+
+The **Message History** tab shows the recent top-left HUD messages (item pickups, quest updates, warnings, radio messages, and similar notifications) as a simple chronological log. It has no filters or search — the most recent messages are kept up to the configured limit (see `MessageBufferSize` below), and its Clear button only ever affects the message history, never the dialogue history. Message capture runs in the background regardless of which tab you're looking at.
 
 Not *all* dialogue is captured.  Random NPC lines that get spoken as you're walking around for ambience are intentionally not recorded.  Some player opening lines for dialogue are also not recorded, and where this happens it's because the dialogue lines are assigned to a generic "player lines" quest.
 
@@ -16,6 +18,7 @@ The INI file (FO4 Dialogue History\F4SE\Plugins\FO4DialogueHistory.ini) contains
 
 - Hotkey lets you customize the hotkey to open the window.
 - BufferSize lets you set a maximum number of lines to store(the buffer works on a "first in, first out" principle, so the oldest line gets bumped out for the newest one when you hit the limit)
+- MessageBufferSize does the same for the Message History tab: the maximum number of HUD messages kept (1-1000, default 200). This buffer is always bounded — unlike dialogue there is no unlimited mode — and the oldest message is dropped first.
 - FontSize sets the initial panel font size (10–48 px). In-game changes take precedence.
 - PauseOnOpen sets the initial pause preference (0 = off, 1 = on). In-game changes take precedence.
 - VerboseCapture will write extra data about every line being detected including ones that are rejected from capture(you probably don't need to turn this on, but if you're seeing dialogue ending up in the wrong place, not being captured when it should or vice versa, this option will generate the diagnostic logging necessary to figure out what's going on)
@@ -25,13 +28,13 @@ Controller support has been added.  Please note that I do not play with a contro
 
 ## Technical info
 
-The mod will save the dialogue history into your f4se "cosave" file - this is the .f4se file that rides along side your .fos save files.  In my testing I've found that it's about 1MB of cosave per 5000 lines of dialogue history, give or take.  I tested up to 35,000 lines and a 6MB cosave file and did not notice any issues, save loading was not delayed and the dialogue history window was still responsive with quest selections and scrolling still feeling snappy.  If you use the clear feature to erase the stored dialogue and save your game, you'll see the cosave file deflate back to a more normal size of a few tens of KB.
+The mod will save the dialogue history into your f4se "cosave" file - this is the .f4se file that rides along side your .fos save files.  In my testing I've found that it's about 1MB of cosave per 5000 lines of dialogue history, give or take.  I tested up to 35,000 lines and a 6MB cosave file and did not notice any issues, save loading was not delayed and the dialogue history window was still responsive with quest selections and scrolling still feeling snappy.  The Message History tab is stored in its own separate `MSGS` record inside the same cosave, so message data and dialogue data never interfere with each other; a corrupted message record can never touch your dialogue history and vice versa.  If you use the clear feature to erase the stored dialogue and save your game, you'll see the cosave file deflate back to a more normal size of a few tens of KB.
 
 ## Install/Uninstall info
 
 Installation is the same as any other F4SE plugin for the most part - just install the zip with your modloader of choice.  I use MO2, so for that you just drag and drop the release zip into your downloads panel and then install the mod.  It includes no ESP/ESL, just the f4se dll, ini file for settings, and the PrismaUI files for the UI.
 
-You can uninstall simply by disabling and removing the mod, however the cosave data will remain.  It shouldn't "do" anything other than take up some space, and you shouldn't notice any differences with save loading times etc. I would recommend using the "clear" function to clear your entire dialogue history before removing the mod though just to get rid of that data.  I don't have any reason to think it would be a problem, but it's just the cleaner way to uninstall.
+You can uninstall simply by disabling and removing the mod, however the cosave data will remain.  It shouldn't "do" anything other than take up some space, and you shouldn't notice any differences with save loading times etc. I would recommend using the "clear" function on each tab to clear your entire dialogue and message history before removing the mod though just to get rid of that data.  I don't have any reason to think it would be a problem, but it's just the cleaner way to uninstall.
 
 ## Requirements
 

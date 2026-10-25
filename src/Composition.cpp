@@ -5,13 +5,16 @@
 #include <Windows.h>  // MapVirtualKeyW — OG keyMask carries VK codes (C11)
 
 #include "Application/Capture/CapturePipeline.h"
+#include "Application/Capture/MessageCapturePipeline.h"
 #include "Application/Input/HotkeyController.h"
 #include "Application/Settings/Settings.h"
 #include "Application/StressTest/StressTestInjector.h"
 #include "Application/View/ViewController.h"
 #include "Core/Dialogue/DialogueBuffer.h"
 #include "Core/Input/GamepadButtonMap.h"
+#include "Core/Message/MessageBuffer.h"
 #include "Infrastructure/Cosave/CosaveStore.h"
+#include "Infrastructure/Hooks/HudMessageSink.h"
 #include "Infrastructure/Hooks/SubtitleHook.h"
 #include "Infrastructure/Input/GameplayInputGate.h"
 #include "Infrastructure/Logging/Log.h"
@@ -24,8 +27,9 @@
 
 // Process-lifetime object graph, held by function-local statics (F4SE
 // plugins never unload). C5: the INI is parsed once at kGameDataReady and
-// the whole graph — buffer sized from it, view bridge + controller +
-// pipeline, hotkey + input sink, subtitle hook — builds immediately after,
+// the whole graph — dialogue + message buffers sized from it, view bridge +
+// controller + both capture pipelines, hotkey + input sink, subtitle hook +
+// HUD message sink — builds immediately after,
 // in InitializeDataLoaded. (FallHook installs the same ShowSubtitle prologue
 // hook even earlier, at F4SEPlugin_Load; no subtitle can fire before
 // kGameDataReady.)
@@ -329,18 +333,21 @@ namespace F4DH
 		static Infrastructure::IniSettingsStore settingsStore;
 		root.settings = settingsStore.Load();
 		root.log.Info(std::format(
-			"settings: hotkey={} bufferSize={} fontSize={} pauseOnOpen={} verboseCapture={} keyProbe={}",
+			"settings: hotkey={} bufferSize={} messageBufferSize={} fontSize={} pauseOnOpen={} verboseCapture={} keyProbe={}",
 			root.settings.hotkeyScanCode,
 			root.settings.bufferSize,
+			root.settings.messageBufferSize,
 			root.settings.viewPreferences.fontSize,
 			root.settings.viewPreferences.pauseOnOpen,
 			root.settings.verboseCapture,
 			root.settings.keyProbe));
 
 		static Core::DialogueBuffer                buffer{ root.settings.bufferSize };
+		static Core::MessageBuffer                 messageBuffer{ root.settings.messageBufferSize };
 		static Infrastructure::PrismaViewBridge    bridge;
-		static Application::ViewController         viewController(buffer, bridge, root.log);
+		static Application::ViewController         viewController(buffer, messageBuffer, bridge, root.log);
 		static Application::CapturePipeline        pipeline(buffer, viewController, root.log, root.settings.verboseCapture);
+		static Application::MessageCapturePipeline messagePipeline(messageBuffer, viewController, root.log, root.settings.verboseCapture);
 		static Application::StressTestInjector     stressInjector(buffer, viewController, root.log, root.settings);
 		static Application::HotkeyController       hotkey(root.settings, viewController, stressInjector);
 
@@ -416,12 +423,19 @@ namespace F4DH
 			return false;
 		}
 
-		// M3: hand the buffer to the cosave store (registered at plugin load).
+		// Message History v1.3.0: passive accepted-display HUD message capture.
+		// Degraded, never fatal — dialogue capture and persistence keep working
+		// when the display-data event source is unavailable.
+		if (!Infrastructure::HudMessageSink::Install(messagePipeline)) {
+			root.log.Error("HUD message sink unavailable — message history disabled (dialogue history unaffected)");
+		}
+
+		// M3: hand the buffers to the cosave store (registered at plugin load).
 		// The serialization callbacks run on the game thread, same as capture.
-		Infrastructure::CosaveStore::Bind(&buffer);
+		Infrastructure::CosaveStore::Bind(&buffer, &messageBuffer);
 
 		root.graphReady = true;
-		root.log.Info("data-loaded initialization complete (object graph built, subtitle hook installed)");
+		root.log.Info("data-loaded initialization complete (object graph built, subtitle hook installed, message sink active)");
 		return true;
 	}
 }

@@ -3,6 +3,7 @@
 #include <format>
 
 #include "Core/Dialogue/PayloadBuilder.h"
+#include "Core/Message/MessagePayloadBuilder.h"
 #include "Application/Input/IGameplayInputGate.h"
 
 namespace F4DH::Application
@@ -40,6 +41,13 @@ namespace F4DH::Application
 				g_target->OnClearQuests(questIds);
 			}
 		}
+
+		void ClearMessagesThunk()
+		{
+			if (g_target) {
+				g_target->OnClearMessages();
+			}
+		}
 	}
 
 	void ViewController::SetCloseTarget(ViewController* instance) noexcept
@@ -47,14 +55,16 @@ namespace F4DH::Application
 		g_target = instance;
 	}
 
-	ViewController::ViewController(Core::DialogueBuffer& buffer, IViewBridge& bridge, Core::ILogger& logger) :
+	ViewController::ViewController(Core::DialogueBuffer& buffer, Core::MessageBuffer& messageBuffer, IViewBridge& bridge, Core::ILogger& logger) :
 		_buffer(buffer),
+		_messageBuffer(messageBuffer),
 		_bridge(bridge),
 		_logger(logger)
 	{
 		_bridge.SetCloseCallback(&CloseThunk);
 		_bridge.SetClearCallbacks(&ClearAllThunk, &ClearQuestThunk);
 		_bridge.SetClearQuestsCallback(&ClearQuestsThunk);
+		_bridge.SetClearMessagesCallback(&ClearMessagesThunk);
 	}
 
 	void ViewController::Toggle()
@@ -72,6 +82,20 @@ namespace F4DH::Application
 			const auto lines = _buffer.Snapshot();
 			if (!lines.empty()) {
 				_bridge.AppendLine(Core::PayloadBuilder::BuildAppend(lines.back()));
+			}
+		}
+	}
+
+	void ViewController::NotifyMessage()
+	{
+		// Mirror of NotifyLine on the independent message channel: the panel
+		// appends live only while open; hidden/closed panels skip the push and
+		// receive the buffer's next snapshot on open. Safe from any engine
+		// thread — the bridge marshals to the game thread exactly like AppendLine.
+		if (_state == ViewState::Open) {
+			const auto messages = _messageBuffer.Snapshot();
+			if (!messages.empty()) {
+				_bridge.AppendMessage(Core::MessagePayloadBuilder::BuildAppend(messages.back()));
 			}
 		}
 	}
@@ -113,6 +137,17 @@ namespace F4DH::Application
 		}
 	}
 
+	void ViewController::OnClearMessages()
+	{
+		// Message-only clear: dialogue storage, snapshots, search, and
+		// selection are untouched (AC10). The empty message snapshot is pushed
+		// like the dialogue clear's refresh so an open panel updates and a
+		// later DOM-ready replay restores the cleared state.
+		_messageBuffer.Clear();
+		_logger.Info("clear history: removed all messages");
+		_bridge.PushMessageSnapshot(Core::MessagePayloadBuilder::BuildSnapshot(_messageBuffer.Snapshot()));
+	}
+
 	void ViewController::SetTyping(bool typing) noexcept
 	{
 		// #005 C2: toggle the gate on typing-ACTIVE transitions (typing && Open),
@@ -143,7 +178,11 @@ namespace F4DH::Application
 			_state = ViewState::Degraded;
 			return;
 		}
+		// Fresh open always lands on Dialogue History (the view selects its
+		// dialogue tab on setHistory), but the message channel replays
+		// independently — both caches/snapshots go down their own transports.
 		_bridge.PushSnapshot(Core::PayloadBuilder::BuildSnapshot(_buffer.Snapshot()));
+		_bridge.PushMessageSnapshot(Core::MessagePayloadBuilder::BuildSnapshot(_messageBuffer.Snapshot()));
 		_bridge.Show();
 		_bridge.Focus();
 		_state = ViewState::Open;

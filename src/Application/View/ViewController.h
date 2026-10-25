@@ -5,6 +5,7 @@
 
 #include "Core/Dialogue/DialogueBuffer.h"
 #include "Core/ILogger.h"
+#include "Core/Message/MessageBuffer.h"
 #include "IViewBridge.h"
 
 namespace F4DH::Application
@@ -19,20 +20,25 @@ namespace F4DH::Application
 	};
 
 	// Owns the panel Hidden/Open/Degraded state machine and its data pushes.
+	// Holds independent references to the dialogue and message buffers: the
+	// two histories never share storage, snapshots, appends, or clear paths.
 	class ViewController
 	{
 	public:
-		ViewController(Core::DialogueBuffer& buffer, IViewBridge& bridge, Core::ILogger& logger);
+		ViewController(Core::DialogueBuffer& buffer, Core::MessageBuffer& messageBuffer, IViewBridge& bridge, Core::ILogger& logger);
 
 		void Toggle();       // hotkey
 		void NotifyLine();   // a new line was recorded; append if Open
+		void NotifyMessage();  // a new message was recorded; append if Open
 		void OnCloseRequested();  // Esc / JS closeRequested
 
 		// Confirmed clear-history requests from the view (routed through
-		// the bridge's clear callbacks).
+		// the bridge's clear callbacks). Message clear is its own channel —
+		// it never touches dialogue storage and vice versa.
 		void OnClearAll();
 		void OnClearQuest(std::uint32_t questId);
 		void OnClearQuests(const std::vector<std::uint32_t>& questIds);  // multi-quest selection clear: one pass per id, one snapshot
+		void OnClearMessages();  // confirmed message-history clear: messages only
 
 		// Mirrors the OnClearAll refresh: a bulk buffer mutation outside the
 		// capture path (stress-test injector) needs a full snapshot re-push.
@@ -66,6 +72,7 @@ namespace F4DH::Application
 		void Close();
 
 		Core::DialogueBuffer& _buffer;
+		Core::MessageBuffer&  _messageBuffer;
 		IViewBridge&          _bridge;
 		Core::ILogger&        _logger;
 		ViewState             _state = ViewState::Hidden;

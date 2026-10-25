@@ -30,9 +30,12 @@ namespace F4DH::Infrastructure
 		void Unfocus() override;
 		void PushSnapshot(const std::string& json) override;
 		void AppendLine(const std::string& json) override;
+		void PushMessageSnapshot(const std::string& json) override;
+		void AppendMessage(const std::string& json) override;
 		void SetCloseCallback(CloseCallback fn) override;
 		void SetClearCallbacks(ClearAllCallback allFn, ClearQuestCallback questFn) override;
 		void SetClearQuestsCallback(ClearQuestsCallback questsFn) override;
+		void SetClearMessagesCallback(ClearMessagesCallback fn) override;
 		[[nodiscard]] bool IsHealthy() override;
 
 		// #005: the view reports a text input focused ("1") / blurred ("0")
@@ -119,6 +122,7 @@ namespace F4DH::Infrastructure
 		ClearAllCallback                   _clearAllCallback = nullptr;
 		ClearQuestCallback                 _clearQuestCallback = nullptr;
 		ClearQuestsCallback                _clearQuestsCallback = nullptr;
+		ClearMessagesCallback              _clearMessagesCallback = nullptr;  // message-history clear request
 		TypingStateCallback                _typingStateCallback;  // #005: empty until Composition wires it
 		Core::ViewPreferences              _preferences;  // cached view preferences (16/false until seeded); pushed to the view ahead of each snapshot
 		bool                               _focused{ false };  // set by Focus(), cleared by Unfocus()/Hide(); gates the live pause-change refocus

@@ -16,9 +16,12 @@ namespace F4DH::Application
 		void Unfocus() override {}
 		void PushSnapshot(const std::string&) override {}
 		void AppendLine(const std::string&) override {}
+		void PushMessageSnapshot(const std::string&) override {}
+		void AppendMessage(const std::string&) override {}
 		void SetCloseCallback(CloseCallback) override {}
 		void SetClearCallbacks(ClearAllCallback, ClearQuestCallback) override {}
 		void SetClearQuestsCallback(ClearQuestsCallback) override {}
+		void SetClearMessagesCallback(ClearMessagesCallback) override {}
 		[[nodiscard]] bool IsHealthy() override { return false; }
 	};
 }

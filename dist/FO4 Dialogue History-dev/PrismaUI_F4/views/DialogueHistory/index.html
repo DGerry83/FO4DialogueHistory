@@ -8,7 +8,7 @@
 <body>
 <div id="panel">
   <div id="header">
-    <span id="title">Dialogue History</span>
+    <span id="title">History</span>
     <span id="header-right">
       <span id="prefs">
         <input id="fontslider" type="range" min="10" max="48" step="1" value="16" title="Panel font size (10-48)">
@@ -18,6 +18,13 @@
       <button id="clear" type="button">Clear</button>
       <span id="hint">Esc to close</span>
     </span>
+  </div>
+  <!-- v1.3.0: two tabs, one panel. The strip is always visible; the mode
+       class on #panel shows exactly one body pane (hidden dialogue controls
+       are unreachable by mouse and by the focus model). -->
+  <div id="tabstrip">
+    <button id="tabdialogue" class="active" type="button" title="Show dialogue history">Dialogue History</button>
+    <button id="tabmessage" type="button" title="Show message history">Message History</button>
   </div>
   <div id="body">
     <div id="index">
@@ -40,6 +47,13 @@
       </div>
       <div id="empty">No conversation recorded yet.</div>
       <div id="log"></div>
+    </div>
+    <!-- v1.3.0 Message History: one full-width pane (design §6.2) — the log
+         is the only scrolling region; no index/filter row/search bar/splitter
+         is rendered or focusable in this mode. -->
+    <div id="messages">
+      <div id="msgempty">No messages recorded yet.</div>
+      <div id="msglog"></div>
     </div>
   </div>
   <div id="overlay" hidden>

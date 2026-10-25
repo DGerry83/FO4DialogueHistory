@@ -16,9 +16,10 @@
 // Threading: JS listener callbacks and any off-game-thread caller are
 // marshaled to the game thread via IVPrismaUI11::DispatchToGameThread, so
 // all bridge internals run exclusively on the game thread.
-// Data flow: PushSnapshot caches the payload and forwards it; the view's
-// requestHistory listener (fired on DOM ready) replays the cache, because
-// PrismaUI must not receive InteropCall before the DOM is ready.
+// Data flow: PushSnapshot and PushMessageSnapshot each cache their payload
+// and forward it on their own channel; the view's requestHistory listener
+// (fired on DOM ready) and OnDomReady replay both caches independently,
+// because PrismaUI must not receive InteropCall before the DOM is ready.
 
 namespace F4DH::Infrastructure
 {
@@ -40,8 +41,10 @@ namespace F4DH::Infrastructure
 		PrismaViewBridge::ClearAllCallback   g_clearAllCallback{ nullptr };
 		PrismaViewBridge::ClearQuestCallback g_clearQuestCallback{ nullptr };
 		PrismaViewBridge::ClearQuestsCallback g_clearQuestsCallback{ nullptr };
+		PrismaViewBridge::ClearMessagesCallback g_clearMessagesCallback{ nullptr };  // message-history clear request
 		PrismaViewBridge::TypingStateCallback g_typingStateCallback;  // #005 mirror
 		std::string                      g_snapshotCache;
+		std::string                      g_messageSnapshotCache;  // independent message-history replay cache
 		bool                             g_prismaMissingLogged{ false };
 		bool                             g_createResultLogged{ false };
 		// Set by Focus(), cleared by Unfocus()/Hide(); applied in OnDomReady
@@ -101,6 +104,20 @@ namespace F4DH::Infrastructure
 			Dispatch([] {
 				if (g_clearAllCallback) {
 					g_clearAllCallback();
+				}
+			});
+		}
+
+		void OnClearMessagesRequested(const char*)
+		{
+			// Message-history clear (confirmed by the view's overlay). The
+			// payload is always "" — message clear is all-or-nothing — so
+			// there is nothing to parse; route on the game thread like the
+			// dialogue clear requests.
+			REX::LogInformation("PrismaViewBridge: clearMessagesRequested received from view");
+			Dispatch([] {
+				if (g_clearMessagesCallback) {
+					g_clearMessagesCallback();
 				}
 			});
 		}
@@ -266,6 +283,7 @@ namespace F4DH::Infrastructure
 			g_api->RegisterJSListener(a_view, "clearAllRequested", &OnClearAllRequested);
 			g_api->RegisterJSListener(a_view, "clearQuestRequested", &OnClearQuestRequested);
 			g_api->RegisterJSListener(a_view, "clearQuestsRequested", &OnClearQuestsRequested);
+			g_api->RegisterJSListener(a_view, "clearMessagesRequested", &OnClearMessagesRequested);  // message-history clear (confirmed)
 			g_api->RegisterJSListener(a_view, "typingStateChanged", &OnTypingStateChanged);  // #005: text-input focus/blur reports
 			g_api->RegisterJSListener(a_view, "viewPreferencesChanged", &OnViewPreferencesChanged);  // font slider / numeric / pause checkbox commits
 			// C7: V12 controller actions (gamepad). Bound only when the runtime
@@ -311,6 +329,13 @@ namespace F4DH::Infrastructure
 			// before the listener is registered, so push the cache directly.
 			if (g_bridge && !g_snapshotCache.empty()) {
 				g_bridge->PushSnapshot(g_snapshotCache);
+			}
+			// Same first-open race for the independent message channel: replay
+			// its own cache (a cleared history replays "[]" — the cache string
+			// is never empty once pushed, so the cleared state survives view
+			// recreation).
+			if (g_bridge && !g_messageSnapshotCache.empty()) {
+				g_bridge->PushMessageSnapshot(g_messageSnapshotCache);
 			}
 			// Same first-open race for geometry: an empty snapshot cache skips
 			// the PushSnapshot path above, so apply it here too.
@@ -492,6 +517,44 @@ namespace F4DH::Infrastructure
 		}
 	}
 
+	void PrismaViewBridge::PushMessageSnapshot(const std::string& json)
+	{
+		if (!_api) {
+			return;
+		}
+		if (!_api->IsGameThread()) {
+			Dispatch([this, json] { PushMessageSnapshot(json); });
+			return;
+		}
+		g_messageSnapshotCache = json;  // replayed by OnDomReady, independent of the dialogue cache
+		if (_view == 0) {
+			return;  // cached; first open replays it once the view exists
+		}
+		if (IsHealthy()) {
+			ApplyGeometry();
+			ApplyFilters();
+			ApplyViewPreferences();
+			_api->InteropCall(_view, "setMessageHistory", json.c_str());
+		}
+	}
+
+	void PrismaViewBridge::AppendMessage(const std::string& json)
+	{
+		// Live tail on the message channel; mirrors AppendLine (cache/replay
+		// is snapshot business — appends while the view is absent are covered
+		// by the next snapshot push, exactly like dialogue).
+		if (!_api || _view == 0) {
+			return;
+		}
+		if (!_api->IsGameThread()) {
+			Dispatch([this, json] { AppendMessage(json); });
+			return;
+		}
+		if (IsHealthy()) {
+			_api->InteropCall(_view, "appendMessage", json.c_str());
+		}
+	}
+
 	void PrismaViewBridge::SetCloseCallback(CloseCallback fn)
 	{
 		_closeCallback = fn;
@@ -510,6 +573,12 @@ namespace F4DH::Infrastructure
 	{
 		_clearQuestsCallback = questsFn;
 		g_clearQuestsCallback = questsFn;
+	}
+
+	void PrismaViewBridge::SetClearMessagesCallback(ClearMessagesCallback fn)
+	{
+		_clearMessagesCallback = fn;
+		g_clearMessagesCallback = fn;
 	}
 
 	void PrismaViewBridge::SetTypingStateCallback(TypingStateCallback fn)

@@ -20,6 +20,9 @@ add_executable(Core.Tests
 	ConversationFilterTests.cpp
 	PayloadBuilderTests.cpp
 	CosaveCodecTests.cpp
+	MessageBufferTests.cpp
+	MessagePayloadBuilderTests.cpp
+	MessageCosaveCodecTests.cpp
 	PanelGeometryTests.cpp
 	ViewFilterStateTests.cpp
 	AliasTokensTests.cpp
@@ -30,6 +33,8 @@ add_executable(Core.Tests
 	${CMAKE_SOURCE_DIR}/src/Core/Dialogue/PayloadBuilder.cpp
 	${CMAKE_SOURCE_DIR}/src/Core/Dialogue/CosaveCodec.cpp
 	${CMAKE_SOURCE_DIR}/src/Core/Dialogue/StressTestDataGenerator.cpp
+	${CMAKE_SOURCE_DIR}/src/Core/Message/MessagePayloadBuilder.cpp
+	${CMAKE_SOURCE_DIR}/src/Core/Message/MessageCosaveCodec.cpp
 	${CMAKE_SOURCE_DIR}/src/Core/Geometry/PanelGeometry.cpp
 	${CMAKE_SOURCE_DIR}/src/Core/Settings/ViewFilterState.cpp
 	${CMAKE_SOURCE_DIR}/src/Core/Settings/ViewPreferences.cpp

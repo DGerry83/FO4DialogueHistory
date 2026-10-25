@@ -419,6 +419,16 @@ namespace F4DH::Infrastructure
 				} else {
 					settings.bufferSize = parsed;
 				}
+			} else if (key == "messagebuffersize") {
+				// Bounded FIFO — zero is NOT unlimited here: it clamps to 1.
+				if (!ok) {
+					REX::LogWarning("IniSettingsStore: invalid MessageBufferSize '{}' — keeping default 200", value);
+				} else if (parsed < 1 || parsed > 1000) {
+					settings.messageBufferSize = std::clamp(parsed, 1u, 1000u);
+					REX::LogWarning("IniSettingsStore: MessageBufferSize {} out of range 1-1000 — clamped to {}", parsed, settings.messageBufferSize);
+				} else {
+					settings.messageBufferSize = parsed;
+				}
 			} else if (key == "fontsize") {
 				if (!ok) {
 					REX::LogWarning("IniSettingsStore: invalid FontSize '{}' — keeping default 16", value);

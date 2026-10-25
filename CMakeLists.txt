@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 4.3.0)
 
-project(FO4DialogueHistory VERSION 1.2.0 LANGUAGES CXX)
+project(FO4DialogueHistory VERSION 1.3.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -36,17 +36,21 @@ add_library(${PROJECT_NAME} SHARED
 	src/Core/Dialogue/PayloadBuilder.cpp
 	src/Core/Dialogue/CosaveCodec.cpp
 	src/Core/Dialogue/StressTestDataGenerator.cpp
+	src/Core/Message/MessagePayloadBuilder.cpp
+	src/Core/Message/MessageCosaveCodec.cpp
 	src/Core/Geometry/PanelGeometry.cpp
 	src/Core/Settings/ViewFilterState.cpp
 	src/Core/Settings/ViewPreferences.cpp
 	src/Core/Input/ScanCodeMap.cpp
 	src/Core/Input/GamepadButtonMap.cpp
 	src/Application/Capture/CapturePipeline.cpp
+	src/Application/Capture/MessageCapturePipeline.cpp
 	src/Application/View/ViewController.cpp
 	src/Application/Input/HotkeyController.cpp
 	src/Application/StressTest/StressTestInjector.cpp
 	src/Infrastructure/Hooks/SubtitleHook.cpp
 	src/Infrastructure/Hooks/QuestResolver.cpp
+	src/Infrastructure/Hooks/HudMessageSink.cpp
 	src/Infrastructure/Input/GameplayInputGate.cpp
 	src/Infrastructure/Cosave/CosaveStore.cpp
 	src/Infrastructure/Prisma/PrismaViewBridge.cpp
