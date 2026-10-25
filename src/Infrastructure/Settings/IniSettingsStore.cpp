@@ -220,10 +220,10 @@ namespace
 
 	// Section-locked [Settings] scan for the preference keys, applied on top
 	// of the main-INI seed (a_inOut). Per-key independence: a missing key
-	// leaves the seeded value; an invalid FontSize (non-integer or outside
-	// 1–128) or PauseOnOpen (not 0/1) is ignored with a warning. The sidecar
-	// widens the font range beyond the main INI's 10–32 slider seed, so the
-	// range check here is intentionally different from the main INI's.
+	// leaves the seeded value; a non-integer FontSize or a PauseOnOpen that
+	// is not 0/1 keeps the seeded value with a warning; a NUMERIC FontSize
+	// outside 10–48 is CLAMPED to the nearest boundary with a warning (C2
+	// legacy migration — older sidecars may hold 1–128 values).
 	void ExtractViewPreferences(const std::vector<std::string>& a_lines, F4DH::Core::ViewPreferences& a_inOut)
 	{
 		bool inSettingsSection{ false };
@@ -259,8 +259,9 @@ namespace
 			if (key == "fontsize") {
 				if (!ParseUint(value, parsed)) {
 					REX::LogWarning("IniSettingsStore: preferences file has invalid FontSize '{}' — keeping the main-INI value", value);
-				} else if (parsed < 1 || parsed > 128) {
-					REX::LogWarning("IniSettingsStore: preferences file FontSize {} out of range 1-128 — keeping the main-INI value", parsed);
+				} else if (parsed < 10 || parsed > 48) {
+					a_inOut.fontSize = static_cast<int>(std::clamp(parsed, 10u, 48u));
+					REX::LogWarning("IniSettingsStore: preferences file FontSize {} out of range 10-48 — clamped to {}", parsed, a_inOut.fontSize);
 				} else {
 					a_inOut.fontSize = static_cast<int>(parsed);
 				}
@@ -421,9 +422,9 @@ namespace F4DH::Infrastructure
 			} else if (key == "fontsize") {
 				if (!ok) {
 					REX::LogWarning("IniSettingsStore: invalid FontSize '{}' — keeping default 16", value);
-				} else if (parsed < 10 || parsed > 32) {
-					settings.viewPreferences.fontSize = static_cast<int>(std::clamp(parsed, 10u, 32u));
-					REX::LogWarning("IniSettingsStore: FontSize {} out of range 10-32 — clamped to {}", parsed, settings.viewPreferences.fontSize);
+				} else if (parsed < 10 || parsed > 48) {
+					settings.viewPreferences.fontSize = static_cast<int>(std::clamp(parsed, 10u, 48u));
+					REX::LogWarning("IniSettingsStore: FontSize {} out of range 10-48 — clamped to {}", parsed, settings.viewPreferences.fontSize);
 				} else {
 					settings.viewPreferences.fontSize = static_cast<int>(parsed);
 				}
@@ -469,7 +470,8 @@ namespace F4DH::Infrastructure
 		}
 
 		// Preferences sidecar: valid sibling keys override the main-INI seed
-		// independently (FontSize widens to 1-128); an absent file or an
+		// independently (numeric FontSize outside 10-48 clamps to the nearest
+		// boundary); an absent file or an
 		// invalid/missing key keeps the seeded value.
 		const auto preferencesPath = ResolveSiblingPath(kPreferencesFileName);
 		const auto preferencesLines = ReadLines(preferencesPath);

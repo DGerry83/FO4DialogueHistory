@@ -5,7 +5,7 @@
 
 namespace F4DH::Core
 {
-	// View presentation preferences: panel-wide font size (integer px, 1–128,
+	// View presentation preferences: panel-wide font size (integer px, 10–48,
 	// default 16) and whether opening the panel pauses the game (default
 	// false = unpaused). Engine-free payload type for the view's
 	// setViewPreferences / viewPreferencesChanged messages
@@ -18,7 +18,7 @@ namespace F4DH::Core
 
 	// Tolerant parse of a preferences JSON object into a_inOut, which the
 	// caller seeds with the current cached state: each key is looked up
-	// independently; fontSize must be a JSON integer in 1–128 and pauseOnOpen
+	// independently; fontSize must be a JSON integer in 10–48 and pauseOnOpen
 	// a JSON true/false literal ending at a JSON boundary (',' / '}' /
 	// whitespace). A missing or invalid field keeps the seeded value. Returns
 	// false and leaves a_inOut untouched when no field parsed (empty or junk

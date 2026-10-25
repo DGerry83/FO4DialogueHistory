@@ -13,8 +13,9 @@ namespace F4DH::Infrastructure
 	// FO4DialogueHistory.view.ini ([Settings] FilterMain/Side/Misc/Unattributed
 	// as 0/1; absent file or keys = all-true defaults). View preferences
 	// (font size + PauseOnOpen) persist in a sibling
-	// FO4DialogueHistory.preferences.ini whose [Settings] FontSize (1–128) and
-	// PauseOnOpen (0/1) keys override the main-INI seed independently.
+	// FO4DialogueHistory.preferences.ini ([Settings] FontSize (10–48) and
+	// PauseOnOpen (0/1); numeric FontSize outside the range clamps to the
+	// nearest boundary) whose keys override the main-INI seed independently.
 	class IniSettingsStore final : public Application::ISettingsStore
 	{
 	public:

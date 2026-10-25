@@ -6,8 +6,8 @@
 
 namespace
 {
-	constexpr int kMinFontSize{ 1 };
-	constexpr int kMaxFontSize{ 128 };
+	constexpr int kMinFontSize{ 10 };
+	constexpr int kMaxFontSize{ 48 };
 	// Payloads come from our own view; deeper nesting than this is treated
 	// as malformed rather than skipped (bounded memory, wholesale reject).
 	constexpr std::size_t kMaxNesting{ 64 };
@@ -113,7 +113,7 @@ namespace
 	}
 
 	// Validates a bare-token integer: full consumption (rejecting "16.5",
-	// "1e3", "16x"), unsigned (rejecting "-8"), range 1–128. Assigns a_out
+	// "1e3", "16x"), unsigned (rejecting "-8"), range 10–48. Assigns a_out
 	// only on success.
 	[[nodiscard]] bool ParseFontSizeToken(std::string_view a_json, std::size_t a_begin, std::size_t a_end, int& a_out)
 	{

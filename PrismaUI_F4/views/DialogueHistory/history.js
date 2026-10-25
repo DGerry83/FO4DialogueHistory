@@ -1627,14 +1627,28 @@ function appendLine(line) {
  * scale)) — see history.css); #log keeps its inline px so the virtualized
  * row measurements stay exact, and the single C17 invalidation re-anchors
  * the dialogue. The setProperty guard is a DOM-stub tolerance (real
- * Ultralight always writes; legacy harness worlds lack the method). */
-function setFontSize(size) {
+ * Ultralight always writes; legacy harness worlds lack the method).
+ * C1 deferred header channel: the HEADER scale lives on the #header
+ * element itself (--dh-header-font-scale) and is written ONLY by full
+ * applications (setFontSize callers: native push, numeric commit,
+ * keyboard/controller step, slider release) — slider input preview writes
+ * the body channel via dhApplyBodyFont and leaves the header untouched,
+ * so a live pointer drag never relayouts the header. */
+function dhApplyBodyFont(size) {
   const root = document.documentElement;
   if (root && root.style && typeof root.style.setProperty === "function") {
     root.style.setProperty("--dh-font-scale", String(Number(size) / 16));
   }
   document.getElementById("log").style.fontSize = Number(size) + "px";
   dhInvalidateHeights();  // C17: row heights changed — re-estimate + re-anchor
+}
+
+function setFontSize(size) {
+  dhApplyBodyFont(size);  // body channel + log inline + the one invalidation
+  const header = document.getElementById("header");
+  if (header && header.style && typeof header.style.setProperty === "function") {
+    header.style.setProperty("--dh-header-font-scale", String(Number(size) / 16));
+  }
 }
 
 function dhSend(eventName, payload) {
@@ -1669,21 +1683,25 @@ function dhWireTypingEmit(el) {
  * bool} payload per gesture — the exact mirror of the C++ ViewPreferences
  * codec). dhPrefs is the view-side cache of the last valid NATIVE PUSH or
  * LOCAL COMMIT ("last valid native/local value"): slider movement
- * PREVIEWS through setFontSize without touching dhPrefs or sending; a
- * completed slider gesture, a valid numeric Enter/blur, and every
- * checkbox change update dhPrefs and send once. Invalid/empty/fractional/
+ * PREVIEWS through dhApplyBodyFont — body channel + #log inline + numeric
+ * mirror, leaving the header scale and dhPrefs untouched and sending
+ * nothing (C1 defers the header channel to full applications only); a
+ * completed slider gesture (change) runs the FULL setFontSize (body +
+ * header) and then commits once; a valid numeric Enter/blur, a
+ * keyboard/controller step, and every checkbox change apply fully and
+ * send once. Invalid/empty/fractional/
  * out-of-range numeric input restores dhPrefs.fontSize into the box and
- * sends nothing. Values outside the slider's 10–32 range stay applied and
- * numeric while the slider element clamps itself to its nearest endpoint
- * (the range input's own value clamping — no JS needed). Pause changes
+ * sends nothing. The slider and the overall accepted range are the same
+ * 10–48 (C2), so every valid value is a slider value and no out-of-slider
+ * state exists. Pause changes
  * commit immediately and never touch the font path; the native side
  * performs the ordered Unfocus->Focus itself, so the view only sends.
  * Old-DLL tolerance both ways: no push ever arrives -> the markup
  * defaults (16 / unchecked) stay live; no listener registered -> dhSend
  * warns and the local commit still lands in dhPrefs (the restore target
- * stays sane). Every applied font size goes through the existing
- * setFontSize, so the C17 virtualization invalidation/re-anchoring runs
- * for each change.
+ * stays sane). Every applied font size runs the C17 virtualization
+ * invalidation/re-anchoring exactly once (inside dhApplyBodyFont, the
+ * shared body-apply both paths use).
  * Keyboard/controller surface (parent rulings V1/V3/V4, 2026-10-24): the
  * prefs cluster is a focus-model zone OUTSIDE dhFocusZoneOrder — the
  * legacy six-zone cycle stays byte-for-byte. ArrowUp from the clear zone
@@ -1698,9 +1716,9 @@ function dhWireTypingEmit(el) {
  * numeric restores the last valid text and returns to the clear zone; a
  * one-shot flag suppresses the blur-commit the move causes. */
 const kPrefsSliderMin = 10;
-const kPrefsSliderMax = 32;
-const kPrefsFontMin = 1;
-const kPrefsFontMax = 128;
+const kPrefsSliderMax = 48;
+const kPrefsFontMin = 10;
+const kPrefsFontMax = 48;
 const dhPrefsStops = ["fontslider", "fontnum", "pauselabel"];
 const dhPrefs = { fontSize: 16, pauseOnOpen: false };
 let dhPrefsEscBlur = false;  // one-shot Escape blur-commit suppression (ruling V2)
@@ -1735,11 +1753,13 @@ function dhPrefsCommit() {
   }));
 }
 
-/* Slider preview: apply the font locally and mirror the value into the
- * numeric box — zero dhSend/native/disk work (contract preview cadence).
- * The invalidation runs because the apply goes through setFontSize. */
+/* Slider preview (input event): applies the BODY channel + #log inline
+ * and mirrors the value into the numeric box — the header channel is
+ * deliberately untouched (C1 deferral), and zero dhSend/native/disk work
+ * leaves this path (contract preview cadence). The single invalidation
+ * runs inside dhApplyBodyFont. */
 function dhPrefsPreviewFont(size) {
-  setFontSize(size);
+  dhApplyBodyFont(size);
   const num = document.getElementById("fontnum");
   if (num) {
     num.value = String(size);
@@ -1755,7 +1775,7 @@ function dhPrefsCommitFont(size) {
   dhPrefsCommit();
 }
 
-/* Strict integer 1–128 parse (the view-side mirror of the native codec):
+/* Strict integer 10–48 parse (the view-side mirror of the native codec):
  * surrounding whitespace tolerated, digits only, range-checked. */
 function dhPrefsParseFont(text) {
   const t = String(text).trim();
@@ -1802,14 +1822,15 @@ function dhPrefsSliderStep(dir) {
     return;  // endpoint — no send, no redundant invalidation
   }
   slider.value = String(next);
-  dhPrefsPreviewFont(next);
   dhPrefs.fontSize = next;
+  setFontSize(next);  // C1: discrete path — full body+header application
+  dhPrefsSyncControls();
   dhPrefsCommit();
 }
 
 /* Plugin -> JS: persisted preferences on open / before snapshot replay.
  * Tolerant per-field parse mirroring the C++ ViewPreferences semantics:
- * an integer fontSize in 1–128 and a boolean pauseOnOpen each apply
+ * an integer fontSize in 10–48 and a boolean pauseOnOpen each apply
  * independently; a missing/invalid field keeps the cached value; a
  * payload with NO valid field is dropped entirely (cached state and
  * controls untouched). A valid push always re-syncs the controls, and the
@@ -2733,6 +2754,7 @@ document.addEventListener("DOMContentLoaded", () => {
     });
     fontSlider.addEventListener("change", function () {
       dhPrefs.fontSize = Number(fontSlider.value);
+      setFontSize(dhPrefs.fontSize);  // C1: release applies body+header once
       dhPrefsSyncControls();
       dhPrefsCommit();  // one combined payload per completed gesture
     });

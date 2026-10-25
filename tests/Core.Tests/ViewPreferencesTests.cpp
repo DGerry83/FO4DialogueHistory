@@ -33,25 +33,26 @@ TEST_CASE("view preferences parse accepts both pause states")
 	REQUIRE(parsed.pauseOnOpen);
 }
 
-TEST_CASE("view preferences parse accepts the integer font boundaries 1 and 128")
+TEST_CASE("view preferences parse accepts the integer font boundaries 10 and 48")
 {
 	F4DH::Core::ViewPreferences parsed;
-	REQUIRE(F4DH::Core::ParseViewPreferences("{\"fontSize\":1}", parsed));
-	REQUIRE(parsed.fontSize == 1);
+	REQUIRE(F4DH::Core::ParseViewPreferences("{\"fontSize\":10}", parsed));
+	REQUIRE(parsed.fontSize == 10);
 
-	REQUIRE(F4DH::Core::ParseViewPreferences("{\"fontSize\":128}", parsed));
-	REQUIRE(parsed.fontSize == 128);
+	REQUIRE(F4DH::Core::ParseViewPreferences("{\"fontSize\":48}", parsed));
+	REQUIRE(parsed.fontSize == 48);
 }
 
 TEST_CASE("view preferences parse rejects out-of-range font sizes without touching cached state")
 {
 	F4DH::Core::ViewPreferences parsed{ 99, true };
 	REQUIRE(!F4DH::Core::ParseViewPreferences("{\"fontSize\":0}", parsed));
-	REQUIRE(parsed.fontSize == 99);   // 0 rejected, seed kept
-	REQUIRE(parsed.pauseOnOpen);      // untouched
-
+	REQUIRE(!F4DH::Core::ParseViewPreferences("{\"fontSize\":1}", parsed));    // legacy lower bound
+	REQUIRE(!F4DH::Core::ParseViewPreferences("{\"fontSize\":9}", parsed));
+	REQUIRE(!F4DH::Core::ParseViewPreferences("{\"fontSize\":49}", parsed));
+	REQUIRE(!F4DH::Core::ParseViewPreferences("{\"fontSize\":128}", parsed));  // legacy upper bound
 	REQUIRE(!F4DH::Core::ParseViewPreferences("{\"fontSize\":129}", parsed));
-	REQUIRE(parsed.fontSize == 99);   // 129 rejected, seed kept
+	REQUIRE(parsed.fontSize == 99);   // rejected payloads never replace cached state
 	REQUIRE(parsed.pauseOnOpen);      // untouched
 }
 
@@ -199,6 +200,6 @@ TEST_CASE("view preferences parse rejects trailing commas", "[structural]")
 
 TEST_CASE("view preferences format emits integer font and JSON bool literal")
 {
-	REQUIRE(F4DH::Core::FormatViewPreferences({ 1, false }) == "{\"fontSize\":1,\"pauseOnOpen\":false}");
-	REQUIRE(F4DH::Core::FormatViewPreferences({ 128, true }) == "{\"fontSize\":128,\"pauseOnOpen\":true}");
+	REQUIRE(F4DH::Core::FormatViewPreferences({ 10, false }) == "{\"fontSize\":10,\"pauseOnOpen\":false}");
+	REQUIRE(F4DH::Core::FormatViewPreferences({ 48, true }) == "{\"fontSize\":48,\"pauseOnOpen\":true}");
 }

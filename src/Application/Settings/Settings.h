@@ -28,6 +28,6 @@ namespace F4DH::Application
 		std::uint32_t stressTestQuests = 20;   // [Diagnostics] StressTestQuests: synthetic quests per batch (clamped 1-100)
 		std::optional<Core::PanelGeometry> panelGeometry;  // absent = default centered layout
 		Core::ViewFilterState viewFilters;  // quest-bucket checkboxes; default all-true, loaded from the sibling view.ini when present
-		Core::ViewPreferences viewPreferences{};  // panel-wide font size + pause-on-open; the main INI seeds (FontSize 10–32, PauseOnOpen 0/1) and the sibling preferences.ini overrides per key (FontSize 1–128)
+		Core::ViewPreferences viewPreferences{};  // panel-wide font size + pause-on-open; the main INI seeds (FontSize 10–48, PauseOnOpen 0/1) and the sibling preferences.ini overrides per key (FontSize 10–48, numeric out-of-range clamps)
 	};
 }

@@ -8,6 +8,7 @@
 
 :root {
   --dh-font-scale: 1;  /* 16 px reference — setFontSize writes size/16 */
+  --dh-header-font-scale: 1;  /* C1 deferred header channel — setFontSize writes it on #header */
 }
 
 html, body {
@@ -38,6 +39,14 @@ html, body {
 }
 
 #header {
+  /* C1 deferred header channel: the slider's live preview writes only the
+   * root body channel; full applications (slider release, numeric commit,
+   * keyboard/controller step, native push) write --dh-header-font-scale
+   * on THIS element. Shadowing the body var here routes every descendant
+   * calc(Npx * var(--dh-font-scale)) rule and this scaled title base
+   * through the deferred channel — the header never relayouts mid-drag. */
+  --dh-font-scale: var(--dh-header-font-scale);
+  font-size: calc(16px * var(--dh-header-font-scale));
   display: flex;
   flex: none;  /* 2026-10-25: content-driven height — never flex-shrink in the column container */
   flex-wrap: wrap;
