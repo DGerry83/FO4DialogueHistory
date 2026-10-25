@@ -5,7 +5,7 @@
 
 namespace F4DH::Core
 {
-	// View presentation preferences: dialogue font size (integer px, 1–128,
+	// View presentation preferences: panel-wide font size (integer px, 1–128,
 	// default 16) and whether opening the panel pauses the game (default
 	// false = unpaused). Engine-free payload type for the view's
 	// setViewPreferences / viewPreferencesChanged messages

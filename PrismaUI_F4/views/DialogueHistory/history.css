@@ -1,10 +1,23 @@
-/* Dialogue History view — visual system per DESIGN_SPEC.md §6.3. */
+/* Dialogue History view — visual system per DESIGN_SPEC.md §6.3.
+ * 2026-10-25 panel-wide typography: every fixed font size below is
+ * proportional to the root --dh-font-scale custom property (default 1),
+ * which history.js setFontSize writes as size/16 — one write scales the
+ * whole panel (title, chrome, rows, overlay, tooltip). Chrome without an
+ * explicit size inherits the scaled html/body base. #log additionally
+ * carries the plugin's inline px so virtualized row heights stay exact. */
+
+:root {
+  --dh-font-scale: 1;  /* 16 px reference — setFontSize writes size/16 */
+}
 
 html, body {
   margin: 0;
   height: 100%;
   background: transparent;
   font-family: "Consolas", "Lucida Console", monospace;
+  /* Scaled base: chrome without an explicit size (#title, #overlaymsg,
+   * #dialoguebar, #overlaybtns) inherits this and scales with it. */
+  font-size: calc(16px * var(--dh-font-scale));
 }
 
 #panel {
@@ -26,6 +39,7 @@ html, body {
 
 #header {
   display: flex;
+  flex: none;  /* 2026-10-25: content-driven height — never flex-shrink in the column container */
   flex-wrap: wrap;
   justify-content: space-between;
   align-items: baseline;
@@ -64,7 +78,7 @@ html, body {
 
 #hint {
   color: #4C8A4C;
-  font-size: 12px;
+  font-size: calc(12px * var(--dh-font-scale));
   font-variant: normal;
 }
 
@@ -117,7 +131,7 @@ html, body {
   border-radius: 4px;
   color: #D7FFD7;
   font: inherit;
-  font-size: 14px;
+  font-size: calc(14px * var(--dh-font-scale));
 }
 #search:focus {
   outline: none;
@@ -132,7 +146,7 @@ html, body {
   gap: 4px 10px;
   margin: 0 8px 8px;
   color: #7BFF7B;
-  font-size: 12px;
+  font-size: calc(12px * var(--dh-font-scale));
   user-select: none;
 }
 #filters label {
@@ -169,7 +183,7 @@ html, body {
   padding: 6px 10px;
   cursor: pointer;
   color: #7BFF7B;
-  font-size: 14px;
+  font-size: calc(14px * var(--dh-font-scale));
 }
 .qentry:hover {
   background: rgba(43, 91, 43, 0.25);
@@ -201,7 +215,7 @@ html, body {
 
 .qcount {
   color: #4C8A4C;
-  font-size: 12px;
+  font-size: calc(12px * var(--dh-font-scale));
 }
 .qentry.active .qcount {
   color: #7BFF7B;
@@ -211,7 +225,7 @@ html, body {
  * per-type friendly name rides the row's title tooltip. */
 .qtype {
   color: #4C8A4C;
-  font-size: 11px;
+  font-size: calc(11px * var(--dh-font-scale));
   font-variant: small-caps;
   white-space: nowrap;
 }
@@ -243,7 +257,7 @@ html, body {
 
 #bodysearchcount {
   color: #4C8A4C;
-  font-size: 12px;
+  font-size: calc(12px * var(--dh-font-scale));
   min-width: 7ch;  /* bounds cluster shift as the count text changes */
   text-align: right;
 }
@@ -257,7 +271,7 @@ html, body {
   border-radius: 4px;
   color: #7BFF7B;
   font: inherit;
-  font-size: 14px;
+  font-size: calc(14px * var(--dh-font-scale));
   line-height: 1;
   padding: 3px 9px;
   cursor: pointer;
@@ -277,7 +291,7 @@ html, body {
   border-radius: 4px;
   color: #D7FFD7;
   font: inherit;
-  font-size: 14px;
+  font-size: calc(14px * var(--dh-font-scale));
 }
 #bodysearch:focus {
   outline: none;
@@ -288,7 +302,7 @@ html, body {
   padding: 24px 10px;
   text-align: center;
   color: #4C8A4C;
-  font-size: 16px;
+  font-size: calc(16px * var(--dh-font-scale));
 }
 
 #log {
@@ -296,7 +310,9 @@ html, body {
   overflow-y: auto;
   padding: 8px 10px;
   color: #D7FFD7;
-  font-size: 16px; /* scaled by the plugin at runtime once INI support lands (C5) */
+  /* Scaled like every other fixed size; the plugin's inline px (setFontSize)
+   * wins at runtime so C17 row measurements stay exact. */
+  font-size: calc(16px * var(--dh-font-scale));
   line-height: 1.4;
 }
 
@@ -346,7 +362,7 @@ html, body {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: calc(12px * var(--dh-font-scale));
   font-weight: normal;
   font-variant: normal;
   white-space: nowrap;
@@ -356,7 +372,7 @@ html, body {
   width: 80px;
 }
 #fontnum {
-  width: 4ch;
+  width: 4ch;  /* ch scales with the font — intrinsic override sizing */
   padding: 2px 4px;
   background: rgba(0, 0, 0, 0.3);
   border: 1px solid #2B5B2B;
@@ -394,7 +410,7 @@ html, body {
   border-radius: 4px;
   color: #7BFF7B;
   font: inherit;
-  font-size: 12px;
+  font-size: calc(12px * var(--dh-font-scale));
   font-variant: normal;
   padding: 2px 10px;
   cursor: pointer;
@@ -432,7 +448,7 @@ html, body {
   max-width: 70%;
   text-align: center;
   color: #D7FFD7;
-  font-size: 14px;
+  font-size: calc(14px * var(--dh-font-scale));
   font-variant: normal;
 }
 
@@ -467,7 +483,7 @@ html, body {
   border-radius: 4px;
   padding: 3px 8px;
   color: #D7FFD7;
-  font-size: 12px;
+  font-size: calc(12px * var(--dh-font-scale));
   max-width: 320px;
   pointer-events: none;
 }

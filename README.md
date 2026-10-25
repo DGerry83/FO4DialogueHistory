@@ -10,13 +10,13 @@ Not *all* dialogue is captured.  Random NPC lines that get spoken as you're walk
 
 The search above the right panel allows you to search the entire Dialogue History body of text.  Results will both filter the quest list so that only quests containing the searched term are shown, and the dialogue lines containing the term will be highlighted.  A total count will also be shown with arrow buttons for moving forward/back through the list of found results.
 
-The header includes dialogue font-size controls and a **Pause on open** checkbox. Drag the slider for sizes 10–32 px, or enter 1–128 px in the adjacent box and press Enter. Font changes apply immediately. Pause on open is off by default; enabling it pauses the game while the panel is open, and closing the panel resumes play. Both choices are saved in `FO4DialogueHistory.preferences.ini` beside the plugin and restored on restart. Keyboard/controller users can reach these controls with Up from the Clear button.
+The header includes panel-wide font-size controls and a **Pause on open** checkbox. Drag the slider for sizes 10–32 px, or enter 1–128 px in the adjacent box and press Enter. Font changes apply immediately to all text in the window, including the header, quest list, dialogue, buttons, overlays, and tooltips; the header grows and wraps to fit larger text. Pause on open is off by default; enabling it pauses the game while the panel is open, and closing the panel resumes play. Both choices are saved in `FO4DialogueHistory.preferences.ini` beside the plugin and restored on restart. Keyboard/controller users can reach these controls with Up from the Clear button.
 
 The INI file (FO4 Dialogue History\F4SE\Plugins\FO4DialogueHistory.ini) contains a few settings you can customize:
 
 - Hotkey lets you customize the hotkey to open the window.
 - BufferSize lets you set a maximum number of lines to store(the buffer works on a "first in, first out" principle, so the oldest line gets bumped out for the newest one when you hit the limit)
-- FontSize sets the initial dialogue font size (10–32 px). In-game changes take precedence.
+- FontSize sets the initial panel font size (10–32 px). In-game changes take precedence.
 - PauseOnOpen sets the initial pause preference (0 = off, 1 = on). In-game changes take precedence.
 - VerboseCapture will write extra data about every line being detected including ones that are rejected from capture(you probably don't need to turn this on, but if you're seeing dialogue ending up in the wrong place, not being captured when it should or vice versa, this option will generate the diagnostic logging necessary to figure out what's going on)
 - StressTestKey sets the hotkey for firing off the "stress test", which was really just for me to verify that the mod could handle having thousands of lines in the history.  StressTestLines and StressTestQuests do what they say.

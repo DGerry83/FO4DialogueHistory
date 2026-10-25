@@ -1622,7 +1622,17 @@ function appendLine(line) {
   }
 }
 
+/* 2026-10-25 panel-wide typography: one root custom property scales every
+ * chrome font-size (all fixed declarations are calc(Npx * var(--dh-font-
+ * scale)) — see history.css); #log keeps its inline px so the virtualized
+ * row measurements stay exact, and the single C17 invalidation re-anchors
+ * the dialogue. The setProperty guard is a DOM-stub tolerance (real
+ * Ultralight always writes; legacy harness worlds lack the method). */
 function setFontSize(size) {
+  const root = document.documentElement;
+  if (root && root.style && typeof root.style.setProperty === "function") {
+    root.style.setProperty("--dh-font-scale", String(Number(size) / 16));
+  }
   document.getElementById("log").style.fontSize = Number(size) + "px";
   dhInvalidateHeights();  // C17: row heights changed — re-estimate + re-anchor
 }
