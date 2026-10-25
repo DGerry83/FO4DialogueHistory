@@ -26,6 +26,7 @@ html, body {
 
 #header {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   align-items: baseline;
   color: #7BFF7B;
@@ -336,11 +337,53 @@ html, body {
   outline: 1px solid rgba(255, 216, 102, 0.8);
 }
 
+/* Header preferences (2026-10-24): font slider + numeric override + pause
+ * checkbox, packed between the title cluster and Clear. history.js
+ * stopPropagation-s the cluster's mousedown so it never starts a panel
+ * drag. Compact 12px chrome so the header stays one row at normal panel
+ * widths. */
+#prefs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: normal;
+  font-variant: normal;
+  white-space: nowrap;
+  user-select: none;
+}
+#fontslider {
+  width: 80px;
+}
+#fontnum {
+  width: 4ch;
+  padding: 2px 4px;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid #2B5B2B;
+  border-radius: 4px;
+  color: #D7FFD7;
+  font: inherit;
+  text-align: center;
+}
+#fontnum:focus {
+  outline: none;
+  border-color: #7BFF7B;
+}
+#pauselabel {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  color: #7BFF7B;
+}
+
 /* Clear history (C5): header button groups with the hint on the right.
  * stopPropagation on its mousedown (history.js) keeps the header's
  * drag-move from starting — and from firing a spurious geometryChanged. */
 #header-right {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   align-items: baseline;
   gap: 10px;
 }
@@ -473,4 +516,18 @@ html, body {
   background: rgba(43, 91, 43, 0.45);
   border-color: #7BFF7B;
   color: #D7FFD7;
+}
+/* Header preference stops (2026-10-24): the slider and the pause label get
+ * the same outline ring as every other zone (outline takes no layout
+ * space); the numeric box mirrors the text-zone treatment (outline + the
+ * model-driven border color, same signal as :focus). */
+#fontslider.dh-focus,
+#pauselabel.dh-focus {
+  outline: 2px solid #7BFF7B;
+  outline-offset: -2px;
+}
+#fontnum.dh-focus {
+  outline: 2px solid #7BFF7B;
+  outline-offset: -2px;
+  border-color: #7BFF7B;
 }

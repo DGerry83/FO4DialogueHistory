@@ -329,10 +329,11 @@ namespace F4DH
 		static Infrastructure::IniSettingsStore settingsStore;
 		root.settings = settingsStore.Load();
 		root.log.Info(std::format(
-			"settings: hotkey={} bufferSize={} fontSize={} verboseCapture={} keyProbe={}",
+			"settings: hotkey={} bufferSize={} fontSize={} pauseOnOpen={} verboseCapture={} keyProbe={}",
 			root.settings.hotkeyScanCode,
 			root.settings.bufferSize,
-			root.settings.fontSize,
+			root.settings.viewPreferences.fontSize,
+			root.settings.viewPreferences.pauseOnOpen,
 			root.settings.verboseCapture,
 			root.settings.keyProbe));
 
@@ -388,7 +389,7 @@ namespace F4DH
 		}
 		static InputSink                           inputSink(hotkey, root.log, matchCode, root.settings.hotkeyScanCode, stressMatchCode, stressScanCode, root.settings.keyProbe, gpBinding, root.settings.exclusiveTypingInput);
 
-		bridge.SetFontSize(root.settings.fontSize);
+		bridge.SetViewPreferences(root.settings.viewPreferences);
 		bridge.SetGeometry(root.settings.panelGeometry);
 		bridge.SetFilters(root.settings.viewFilters);
 		bridge.SetSettingsSink(&settingsStore);

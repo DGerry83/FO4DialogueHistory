@@ -8,6 +8,7 @@
 
 #include "Application/Settings/ISettingsStore.h"
 #include "Core/Geometry/PanelGeometry.h"
+#include "Core/Settings/ViewPreferences.h"
 
 #include "REX/Log.hpp"
 
@@ -222,6 +223,21 @@ namespace F4DH::Infrastructure
 			});
 		}
 
+		void OnViewPreferencesChanged(const char* a_json)
+		{
+			// Fires on PrismaUI's thread; validate + persist on the game
+			// thread (sidecar write at commit cadence: one completed slider
+			// gesture / numeric commit / checkbox change). The tolerant parse
+			// is pure, but cache mutation and the live pause refocus are
+			// game-thread state — the exact filtersChanged split.
+			const std::string payload = a_json ? a_json : "";
+			Dispatch([payload] {
+				if (g_bridge) {
+					g_bridge->HandleViewPreferencesReport(payload);
+				}
+			});
+		}
+
 		void OnConsoleMessage(PrismaView, PRISMA_UI_API::ConsoleMessageLevel a_level, const char* a_message)
 		{
 			switch (a_level) {
@@ -251,6 +267,7 @@ namespace F4DH::Infrastructure
 			g_api->RegisterJSListener(a_view, "clearQuestRequested", &OnClearQuestRequested);
 			g_api->RegisterJSListener(a_view, "clearQuestsRequested", &OnClearQuestsRequested);
 			g_api->RegisterJSListener(a_view, "typingStateChanged", &OnTypingStateChanged);  // #005: text-input focus/blur reports
+			g_api->RegisterJSListener(a_view, "viewPreferencesChanged", &OnViewPreferencesChanged);  // font slider / numeric / pause checkbox commits
 			// C7: V12 controller actions (gamepad). Bound only when the runtime
 			// exposed IVPrismaUI12 — on the V11 fallback g_api is a downcast and
 			// these virtuals must never run (ControllerActionsAvailable gates
@@ -300,10 +317,13 @@ namespace F4DH::Infrastructure
 			if (g_bridge) {
 				g_bridge->ApplyGeometry();
 				g_bridge->ApplyFilters();
+				g_bridge->ApplyViewPreferences();
 			}
 			if (g_focusPending) {
 				g_focusPending = false;
-				g_api->Focus(a_view, false);
+				// Pause only when the cached preference demands it (default
+				// off — the panel must never pause an unfocused-by-default game).
+				g_api->Focus(a_view, g_bridge ? g_bridge->PauseOnOpen() : false);
 			}
 		}
 	}
@@ -394,6 +414,7 @@ namespace F4DH::Infrastructure
 		}
 		g_showPending = false;
 		g_focusPending = false;
+		_focused = false;
 		if (_view == 0) {
 			return;
 		}
@@ -411,10 +432,11 @@ namespace F4DH::Infrastructure
 			return;
 		}
 		g_focusPending = true;  // re-applied by OnDomReady if the DOM is not ready yet
+		_focused = true;  // tracked for the live pause-change refocus
 		if (_view == 0) {
 			return;  // applied after Create() via OnDomReady
 		}
-		_api->Focus(_view, false);  // never pause the game
+		_api->Focus(_view, _preferences.pauseOnOpen);  // pause only when the preference demands it
 		PushInputDeviceMode();  // C8: a re-open reports the current input device
 	}
 
@@ -428,6 +450,7 @@ namespace F4DH::Infrastructure
 			return;
 		}
 		g_focusPending = false;
+		_focused = false;
 		if (_view == 0) {
 			return;
 		}
@@ -448,9 +471,9 @@ namespace F4DH::Infrastructure
 			return;  // cached; first open replays it once the view exists
 		}
 		if (IsHealthy()) {
-			_api->InteropCall(_view, "setFontSize", std::to_string(_fontSize).c_str());
 			ApplyGeometry();
 			ApplyFilters();
+			ApplyViewPreferences();
 			_api->InteropCall(_view, "setHistory", json.c_str());
 		}
 	}
@@ -497,7 +520,17 @@ namespace F4DH::Infrastructure
 
 	void PrismaViewBridge::SetFontSize(int fontSize) noexcept
 	{
-		_fontSize = fontSize;
+		_preferences.fontSize = fontSize;
+	}
+
+	void PrismaViewBridge::SetViewPreferences(const Core::ViewPreferences& preferences) noexcept
+	{
+		_preferences = preferences;
+	}
+
+	bool PrismaViewBridge::PauseOnOpen() const noexcept
+	{
+		return _preferences.pauseOnOpen;
 	}
 
 	void PrismaViewBridge::SetGeometry(const std::optional<Core::PanelGeometry>& geometry) noexcept
@@ -556,6 +589,40 @@ namespace F4DH::Infrastructure
 	{
 		if (_api && _view != 0 && IsHealthy()) {
 			_api->InteropCall(_view, "setFilters", Core::FormatViewFilterState(_filters).c_str());
+		}
+	}
+
+	void PrismaViewBridge::HandleViewPreferencesReport(const std::string& a_jsonPayload)
+	{
+		// Tolerant parse into a copy of the cache: a malformed or junk payload
+		// returns false with the copy untouched, so neither the cached state
+		// nor the sidecar ever sees it (contract invariant).
+		Core::ViewPreferences parsed = _preferences;
+		if (!Core::ParseViewPreferences(a_jsonPayload, parsed)) {
+			REX::LogWarning("PrismaViewBridge: ignoring malformed viewPreferencesChanged payload");
+			return;
+		}
+		const bool pauseChanged = parsed.pauseOnOpen != _preferences.pauseOnOpen;
+		_preferences = parsed;
+		if (_settingsStore) {
+			_settingsStore->SaveViewPreferences(_preferences);
+		}
+		REX::LogInformation("PrismaViewBridge: view preferences changed (fontSize={} pauseOnOpen={})",
+			_preferences.fontSize, _preferences.pauseOnOpen);
+		if (pauseChanged && _focused && _view != 0 && IsHealthy()) {
+			// Live pause change: PrismaUI ignores Focus() on an already-focused
+			// view, so the new value needs the balanced cycle — Unfocus first,
+			// then Focus with the new pause flag. PrismaUI owns the engine
+			// pause count; every close path still runs Unfocus before Hide.
+			_api->Unfocus(_view);
+			_api->Focus(_view, _preferences.pauseOnOpen);
+		}
+	}
+
+	void PrismaViewBridge::ApplyViewPreferences()
+	{
+		if (_api && _view != 0 && IsHealthy()) {
+			_api->InteropCall(_view, "setViewPreferences", Core::FormatViewPreferences(_preferences).c_str());
 		}
 	}
 

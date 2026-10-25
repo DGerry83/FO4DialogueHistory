@@ -22,5 +22,11 @@ namespace F4DH::Application
 		// thread when the view reports a filter change; implementations may
 		// rewrite their backing store, preserving unrelated settings.
 		virtual void SaveViewFilters(const Core::ViewFilterState& a_filters) = 0;
+
+		// Persists the view preferences (dialogue font size + pause-on-open).
+		// Called on the game thread when the view reports a committed
+		// preference change; implementations may rewrite their backing store,
+		// preserving unrelated settings.
+		virtual void SaveViewPreferences(const Core::ViewPreferences& a_preferences) = 0;
 	};
 }

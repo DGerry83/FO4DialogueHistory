@@ -6,6 +6,12 @@
  *                                      v1 DLLs omit the quest fields too;
  *                                      defaults are applied below)
  *               setFontSize(px)
+ *               setViewPreferences(json) {"fontSize","pauseOnOpen"} —
+ *                                     persisted header preferences (font
+ *                                     slider / numeric override / pause
+ *                                     checkbox); pushed before every
+ *                                     snapshot replay; absent = 16 px /
+ *                                     unpaused defaults
  *               setGeometry(json)   {"x","y","width","height"} — persisted
  *                                     panel rect; absent/invalid = keep the
  *                                     default centered layout
@@ -21,8 +27,12 @@
  *                 "<decimal questId,decimal questId,...>") on confirmed
  *                 clear (C5, #003)
  *               window.typingStateChanged("1"/"0") when a text box
- *                 (#search/#bodysearch) gains/loses focus (#005: the plugin
+ *                 (#search/#bodysearch/#fontnum) gains/loses focus (#005: the plugin
  *                 consumes keyboard ButtonEvents while typing)
+ *               window.viewPreferencesChanged(json) once per completed
+ *                 preferences commit — slider change, numeric Enter/blur,
+ *                 pause checkbox toggle — {"fontSize":int,"pauseOnOpen":
+ *                 bool} (2026-10-24 header controls)
  * Keyboard surface (C6): one document-level keydown handler — Esc clears
  * a focused non-empty search box first, leaves a focused empty box
  * (#007: search -> filters, bodysearch -> log), else closes (overlay up:
@@ -1641,6 +1651,248 @@ function dhWireTypingEmit(el) {
   el.addEventListener("blur", function () { dhSend("typingStateChanged", "0"); });
 }
 
+/* Header preferences (2026-10-24 feature): font slider, numeric override,
+ * and Pause-on-open checkbox living in the header (#prefs). The plugin
+ * pushes the persisted state via setViewPreferences before every snapshot
+ * replay; the view reports every completed commit through
+ * viewPreferencesChanged (one combined {"fontSize":int,"pauseOnOpen":
+ * bool} payload per gesture — the exact mirror of the C++ ViewPreferences
+ * codec). dhPrefs is the view-side cache of the last valid NATIVE PUSH or
+ * LOCAL COMMIT ("last valid native/local value"): slider movement
+ * PREVIEWS through setFontSize without touching dhPrefs or sending; a
+ * completed slider gesture, a valid numeric Enter/blur, and every
+ * checkbox change update dhPrefs and send once. Invalid/empty/fractional/
+ * out-of-range numeric input restores dhPrefs.fontSize into the box and
+ * sends nothing. Values outside the slider's 10–32 range stay applied and
+ * numeric while the slider element clamps itself to its nearest endpoint
+ * (the range input's own value clamping — no JS needed). Pause changes
+ * commit immediately and never touch the font path; the native side
+ * performs the ordered Unfocus->Focus itself, so the view only sends.
+ * Old-DLL tolerance both ways: no push ever arrives -> the markup
+ * defaults (16 / unchecked) stay live; no listener registered -> dhSend
+ * warns and the local commit still lands in dhPrefs (the restore target
+ * stays sane). Every applied font size goes through the existing
+ * setFontSize, so the C17 virtualization invalidation/re-anchoring runs
+ * for each change.
+ * Keyboard/controller surface (parent rulings V1/V3/V4, 2026-10-24): the
+ * prefs cluster is a focus-model zone OUTSIDE dhFocusZoneOrder — the
+ * legacy six-zone cycle stays byte-for-byte. ArrowUp from the clear zone
+ * enters prefs at the slider; inside, Up/Down step slider -> numeric ->
+ * pause without wrap, exiting back to clear past either end. Left/Right
+ * on the slider adjusts +/-1 (preview + one commit; endpoint presses send
+ * nothing); on the numeric they are caret keys while non-empty and rove
+ * to the adjacent stop while empty; on the pause label they rove to the
+ * adjacent stop (Right from pause is inert). Enter/Space on the pause
+ * label toggles the checkbox; Enter on the slider is inert; Enter on the
+ * numeric is owned by the input's own keydown (commits). Escape in the
+ * numeric restores the last valid text and returns to the clear zone; a
+ * one-shot flag suppresses the blur-commit the move causes. */
+const kPrefsSliderMin = 10;
+const kPrefsSliderMax = 32;
+const kPrefsFontMin = 1;
+const kPrefsFontMax = 128;
+const dhPrefsStops = ["fontslider", "fontnum", "pauselabel"];
+const dhPrefs = { fontSize: 16, pauseOnOpen: false };
+let dhPrefsEscBlur = false;  // one-shot Escape blur-commit suppression (ruling V2)
+
+/* The stop element at the current roving position (null on old html). */
+function dhPrefsTarget() {
+  return document.getElementById(dhPrefsStops[dhFocusPos.prefs]);
+}
+
+/* Push the cached preferences into all three controls. The range input
+ * clamps an out-of-range font to its nearest endpoint by itself. */
+function dhPrefsSyncControls() {
+  const slider = document.getElementById("fontslider");
+  if (slider) {
+    slider.value = String(dhPrefs.fontSize);
+  }
+  const num = document.getElementById("fontnum");
+  if (num) {
+    num.value = String(dhPrefs.fontSize);
+  }
+  const box = document.getElementById("pausebox");
+  if (box) {
+    box.checked = dhPrefs.pauseOnOpen;
+  }
+}
+
+/* One combined commit payload per completed gesture. */
+function dhPrefsCommit() {
+  dhSend("viewPreferencesChanged", JSON.stringify({
+    fontSize: dhPrefs.fontSize,
+    pauseOnOpen: dhPrefs.pauseOnOpen
+  }));
+}
+
+/* Slider preview: apply the font locally and mirror the value into the
+ * numeric box — zero dhSend/native/disk work (contract preview cadence).
+ * The invalidation runs because the apply goes through setFontSize. */
+function dhPrefsPreviewFont(size) {
+  setFontSize(size);
+  const num = document.getElementById("fontnum");
+  if (num) {
+    num.value = String(size);
+  }
+}
+
+/* Commit a font size known valid: cache, apply (invalidation), sync the
+ * slider/numeric display, send once. */
+function dhPrefsCommitFont(size) {
+  dhPrefs.fontSize = size;
+  setFontSize(size);
+  dhPrefsSyncControls();
+  dhPrefsCommit();
+}
+
+/* Strict integer 1–128 parse (the view-side mirror of the native codec):
+ * surrounding whitespace tolerated, digits only, range-checked. */
+function dhPrefsParseFont(text) {
+  const t = String(text).trim();
+  if (!/^\d+$/.test(t)) {
+    return null;
+  }
+  const v = parseInt(t, 10);
+  return v >= kPrefsFontMin && v <= kPrefsFontMax ? v : null;
+}
+
+/* Restore the numeric box to the last valid value. */
+function dhPrefsRestoreNumeric() {
+  const num = document.getElementById("fontnum");
+  if (num) {
+    num.value = String(dhPrefs.fontSize);
+  }
+}
+
+/* Numeric commit (Enter or blur): a valid value commits; anything else
+ * restores the last valid value and sends nothing. */
+function dhPrefsCommitNumeric() {
+  const num = document.getElementById("fontnum");
+  if (!num) {
+    return;
+  }
+  const v = dhPrefsParseFont(num.value);
+  if (v === null) {
+    dhPrefsRestoreNumeric();
+    return;
+  }
+  dhPrefsCommitFont(v);
+}
+
+/* Slider keyboard step (focus model): +/-1 with preview + one combined
+ * commit; an endpoint press consumes the key but sends nothing. */
+function dhPrefsSliderStep(dir) {
+  const slider = document.getElementById("fontslider");
+  if (!slider) {
+    return;
+  }
+  const cur = Number(slider.value);
+  const next = Math.min(kPrefsSliderMax, Math.max(kPrefsSliderMin, cur + (dir < 0 ? -1 : 1)));
+  if (next === cur) {
+    return;  // endpoint — no send, no redundant invalidation
+  }
+  slider.value = String(next);
+  dhPrefsPreviewFont(next);
+  dhPrefs.fontSize = next;
+  dhPrefsCommit();
+}
+
+/* Plugin -> JS: persisted preferences on open / before snapshot replay.
+ * Tolerant per-field parse mirroring the C++ ViewPreferences semantics:
+ * an integer fontSize in 1–128 and a boolean pauseOnOpen each apply
+ * independently; a missing/invalid field keeps the cached value; a
+ * payload with NO valid field is dropped entirely (cached state and
+ * controls untouched). A valid push always re-syncs the controls, and the
+ * font applies through the existing setFontSize — but only when the
+ * pushed value or the rendered style actually disagrees with the cache,
+ * so an unchanged push costs no invalidation while an abandoned local
+ * preview (style drifted from cache with no commit) still re-anchors. */
+function setViewPreferences(json) {
+  const parsed = dhParse(json, null);
+  if (!parsed || typeof parsed !== "object") {
+    return;
+  }
+  let any = false;
+  let fontSize = dhPrefs.fontSize;
+  if (typeof parsed.fontSize === "number" && Number.isInteger(parsed.fontSize)
+      && parsed.fontSize >= kPrefsFontMin && parsed.fontSize <= kPrefsFontMax) {
+    fontSize = parsed.fontSize;
+    any = true;
+  }
+  let pauseOnOpen = dhPrefs.pauseOnOpen;
+  if (typeof parsed.pauseOnOpen === "boolean") {
+    pauseOnOpen = parsed.pauseOnOpen;
+    any = true;
+  }
+  if (!any) {
+    return;
+  }
+  const changed = fontSize !== dhPrefs.fontSize;
+  dhPrefs.fontSize = fontSize;
+  dhPrefs.pauseOnOpen = pauseOnOpen;
+  const log = document.getElementById("log");
+  if (changed || !log || log.style.fontSize !== fontSize + "px") {
+    setFontSize(fontSize);
+  }
+  dhPrefsSyncControls();
+}
+
+/* Vertical movement inside the prefs cluster (parent ruling V4): no
+ * wrap — slider Up exits back to clear, pause Down exits to clear, the
+ * rest step between adjacent stops. */
+function dhPrefsMove(dir) {
+  if (dhFocusPos.prefs === 0) {
+    if (dir < 0) {
+      dhFocusSetZone("clear");
+      return;
+    }
+    dhFocusPos.prefs = 1;
+  } else if (dhFocusPos.prefs === 1) {
+    dhFocusPos.prefs = dir < 0 ? 0 : 2;
+  } else {
+    if (dir > 0) {
+      dhFocusSetZone("clear");
+      return;
+    }
+    dhFocusPos.prefs = 1;
+  }
+  dhFocusApply();
+}
+
+/* Horizontal movement inside the prefs cluster (parent ruling V4): the
+ * slider adjusts its value (never zone-cycles); the numeric keeps caret
+ * keys while non-empty (D3 convention — NOT prevented) and roves to the
+ * adjacent stop while empty; the pause label roves to the adjacent stop,
+ * with Right from pause inert. preventDefault lands per case. */
+function dhPrefsHorizontal(dir, event) {
+  if (dhFocusPos.prefs === 0) {
+    if (typeof event.preventDefault === "function") {
+      event.preventDefault();
+    }
+    dhPrefsSliderStep(dir);
+    return;
+  }
+  if (dhFocusPos.prefs === 1) {
+    const el = dhPrefsTarget();
+    if (el && el.value) {
+      return;  // caret keys — no preventDefault, default caret move
+    }
+    if (typeof event.preventDefault === "function") {
+      event.preventDefault();
+    }
+    dhFocusPos.prefs = dir < 0 ? 0 : 2;
+    dhFocusApply();
+    return;
+  }
+  if (typeof event.preventDefault === "function") {
+    event.preventDefault();
+  }
+  if (dir < 0) {
+    dhFocusPos.prefs = 1;
+    dhFocusApply();
+  }  // Right from pause: inert (consumed)
+}
+
 /* Clear history (C5/#003): one selection-scoped path. The Clear button opens
  * a confirmation overlay naming the scope — "all", a single quest (also a
  * one-quest selection set), or "multiple quests" for a larger set; Confirm
@@ -1790,7 +2042,8 @@ function dhOnControllerAction(event) {
     // click at the cursor). Typing owns a focused text box — activating
     // there would blur it (search Enter semantics), so A stays inert.
     const active = document.activeElement;
-    if (active && (active.id === "search" || active.id === "bodysearch")) {
+    if (active && (active.id === "search" || active.id === "bodysearch"
+        || active.id === "fontnum")) {
       return;
     }
     dhFocusActivate();
@@ -1828,14 +2081,20 @@ function dhOnControllerAction(event) {
 
 /* Zone order (D2, extended by body search spec §6.1): the bodysearch zone
  * sits between quests and log — the box lives in #dialoguebar above the
- * log pane. */
+ * log pane. Frozen by the c6 harness expectations (2026-10-24 ruling V1):
+ * the prefs header cluster is deliberately NOT part of this array — it is
+ * a separate zone entered by ArrowUp from clear and exited back to clear,
+ * so the six-zone cycle and its wrap stay byte-for-byte. */
 const dhFocusZoneOrder = ["search", "filters", "quests", "bodysearch", "log", "clear"];
 
 /* Per-zone position: filters = checkbox index (dhBuckets order), quests =
  * visible row index; roving — a zone remembers its position across
  * visits, clamped to what is currently rendered. bodysearch is a
- * single-position zone (like search/clear) and needs no roving slot. */
-const dhFocusPos = { search: 0, filters: 0, quests: 0, log: 0, clear: 0 };
+ * single-position zone (like search/clear) and needs no roving slot.
+ * prefs (2026-10-24) = stop index into dhPrefsStops (slider/numeric/
+ * pause) for the header cluster zone, which lives OUTSIDE
+ * dhFocusZoneOrder (parent ruling V1). */
+const dhFocusPos = { search: 0, filters: 0, quests: 0, log: 0, clear: 0, prefs: 0 };
 let dhFocusZone = "log";
 let dhFocusPrev = null;    // D6: zone saved while the overlay traps focus
 let dhFocusOverlay = -1;   // D6: trap position (0 = confirm, 1 = cancel)
@@ -1886,6 +2145,9 @@ function dhFocusTarget() {
   if (dhFocusZone === "bodysearch") {
     return document.getElementById("bodysearch");
   }
+  if (dhFocusZone === "prefs") {
+    return dhPrefsTarget();  // 2026-10-24 header cluster (ruling V1)
+  }
   if (dhFocusZone === "log") {
     return document.getElementById("log");
   }
@@ -1894,9 +2156,10 @@ function dhFocusTarget() {
 
 /* Move the visible indicator to whatever dhFocusTarget resolves: strip
  * the class from the previous marks (detached rows are harmless no-ops)
- * and add it to the new target. Real DOM focus only accompanies the two
- * text zones (#search, #bodysearch — so typing works); leaving one blurs,
- * so typed text can't land in a box while another zone owns the model. */
+ * and add it to the new target. Real DOM focus only accompanies the text
+ * zones (#search, #bodysearch, #fontnum — so typing works); leaving one
+ * blurs, so typed text can't land in a box while another zone owns the
+ * model. */
 function dhFocusApply() {
   for (const el of dhFocusMarked) {
     el.classList.remove("dh-focus");
@@ -1908,12 +2171,13 @@ function dhFocusApply() {
     dhFocusMarked.push(el);
   }
   const active = document.activeElement;
-  const textBox = active && (active.id === "search" || active.id === "bodysearch");
+  const textBox = active && (active.id === "search" || active.id === "bodysearch"
+    || active.id === "fontnum");
   if (textBox && (!el || el !== active)) {
     active.blur();
   }
-  if (el && (el.id === "search" || el.id === "bodysearch") && dhFocusOverlay < 0
-      && typeof el.focus === "function") {
+  if (el && (el.id === "search" || el.id === "bodysearch" || el.id === "fontnum")
+      && dhFocusOverlay < 0 && typeof el.focus === "function") {
     el.focus();
   }
 }
@@ -2129,6 +2393,16 @@ function dhFocusActivate() {
   if (dhFocusZone === "bodysearch") {
     return true;  // Enter/Space are owned by the input's own handlers (I7)
   }
+  if (dhFocusZone === "prefs") {
+    if (dhFocusPos.prefs === 2) {
+      const box = document.getElementById("pausebox");
+      if (box) {
+        box.click();  // ruling V4: Enter/Space toggle via the change path
+        return true;
+      }
+    }
+    return true;  // slider: inert; numeric: its own keydown owns Enter
+  }
   if (dhFocusZone === "log") {
     return false;  // nothing to activate
   }
@@ -2156,7 +2430,8 @@ function dhFocusOnKey(event) {
     return false;
   }
   if (space && event.target
-      && (event.target.id === "search" || event.target.id === "bodysearch")) {
+      && (event.target.id === "search" || event.target.id === "bodysearch"
+        || event.target.id === "fontnum")) {
     return false;  // a typed character while a text box owns the real focus
   }
   if (dhFocusOverlay >= 0) {
@@ -2173,6 +2448,10 @@ function dhFocusOnKey(event) {
     return true;
   }
   if (left || right) {
+    if (dhFocusZone === "prefs") {
+      dhPrefsHorizontal(right ? 1 : -1, event);  // ruling V4 — never zone-cycles
+      return true;
+    }
     if (dhFocusZone === "search" || dhFocusZone === "bodysearch") {
       const box = document.getElementById(dhFocusZone);
       if (box && !box.value) {
@@ -2194,12 +2473,21 @@ function dhFocusOnKey(event) {
   if (up || down) {
     event.preventDefault();
     const dir = up ? -1 : 1;
+    if (dhFocusZone === "prefs") {
+      dhPrefsMove(dir);  // ruling V4 — steps within the cluster, exits to clear
+      return true;
+    }
     if (dhFocusZone === "search") {
       dhFocusSetZone("filters");  // D3: the adjacent zone, both directions
       return true;
     }
     if (dhFocusZone === "bodysearch") {
       dhFocusSetZone("log");  // spec §6.1: Up/Down leave the box for the log
+      return true;
+    }
+    if (up && dhFocusZone === "clear") {
+      dhFocusPos.prefs = 0;  // ruling V1: ArrowUp from clear enters prefs at
+      dhFocusSetZone("prefs");  // the slider — outside the legacy cycle
       return true;
     }
     if (!dhFocusMove(dir)) {
@@ -2212,6 +2500,10 @@ function dhFocusOnKey(event) {
         && event.target.id === "bodysearch") {
       return true;  // I7: the input's own keydown handler already navigates
     }                // — activating here too would move TWICE per Enter
+    if (dhFocusZone === "prefs" && event.target
+        && event.target.id === "fontnum") {
+      return true;  // ruling V4: the input's own keydown commits (I7 pattern)
+    }
     event.preventDefault();
     dhFocusActivate();
     return true;
@@ -2220,6 +2512,8 @@ function dhFocusOnKey(event) {
     event.preventDefault();
     if (dhFocusZone === "filters") {
       dhFocusActivate();  // contract §4: Space toggles the focused checkbox
+    } else if (dhFocusZone === "prefs" && dhFocusPos.prefs === 2) {
+      dhFocusActivate();  // ruling V4: Space toggles the pause checkbox
     }
     return true;  // swallowed elsewhere — no native button/checkbox surprise
   }
@@ -2293,6 +2587,13 @@ function dhFocusSyncFromClick(event) {
     }
     if (id === "log" || (node.classList && node.classList.contains("line"))) {
       dhFocusZone = "log";
+      dhFocusApply();
+      return;
+    }
+    if (id === "fontslider" || id === "fontnum" || id === "pauselabel"
+        || id === "pausebox") {
+      dhFocusZone = "prefs";  // 2026-10-24 header cluster (ruling V1)
+      dhFocusPos.prefs = id === "fontslider" ? 0 : id === "fontnum" ? 1 : 2;
       dhFocusApply();
       return;
     }
@@ -2402,6 +2703,54 @@ document.addEventListener("DOMContentLoaded", () => {
       box.addEventListener("change", dhReportFilters);  // #001: after dhFilterChanged
     }
   }
+  /* Header preferences (2026-10-24): slider previews locally (input) and
+   * commits once per completed gesture (change); the numeric commits on
+   * Enter/blur and restores the last valid value on anything invalid;
+   * the pause checkbox commits immediately. Every lookup is guarded — old
+   * html without the cluster stays inert. */
+  const prefs = document.getElementById("prefs");
+  if (prefs) {
+    // The header is the panel drag handle: keep cluster mousedowns from
+    // bubbling into dhStartDrag("move") (same pattern as #clear).
+    prefs.addEventListener("mousedown", function (event) {
+      event.stopPropagation();
+    });
+  }
+  const fontSlider = document.getElementById("fontslider");
+  if (fontSlider) {
+    fontSlider.addEventListener("input", function () {
+      dhPrefsPreviewFont(Number(fontSlider.value));  // local only — zero sends
+    });
+    fontSlider.addEventListener("change", function () {
+      dhPrefs.fontSize = Number(fontSlider.value);
+      dhPrefsSyncControls();
+      dhPrefsCommit();  // one combined payload per completed gesture
+    });
+  }
+  const fontNum = document.getElementById("fontnum");
+  if (fontNum) {
+    dhWireTypingEmit(fontNum);  // #005: report focus/blur to the plugin
+    fontNum.addEventListener("keydown", function (event) {
+      if (event.key === "Enter" || event.keyCode === 13) {
+        dhPrefsCommitNumeric();  // valid commits; invalid restores, no send
+      }
+    });
+    fontNum.addEventListener("blur", function () {
+      if (dhPrefsEscBlur) {
+        dhPrefsEscBlur = false;  // one-shot (ruling V2): Esc already restored
+        dhPrefsRestoreNumeric();
+        return;
+      }
+      dhPrefsCommitNumeric();  // every non-Esc blur commits
+    });
+  }
+  const pauseBox = document.getElementById("pausebox");
+  if (pauseBox) {
+    pauseBox.addEventListener("change", function () {
+      dhPrefs.pauseOnOpen = pauseBox.checked;
+      dhPrefsCommit();  // immediate; the native side refocuses itself
+    });
+  }
   const header = document.getElementById("header");
   if (header) {
     header.addEventListener("mousedown", dhStartDrag("move"));
@@ -2450,7 +2799,10 @@ document.addEventListener("DOMContentLoaded", () => {
       // clears FIRST and the panel stays open; a focused EMPTY box leaves
       // the text zone (#007 — where Down would land: search -> filters,
       // bodysearch -> log); only then does Esc close. Overlay dismiss
-      // stays above all three.
+      // stays above all three. A focused font numeric (2026-10-24)
+      // restores its uncommitted text and returns to the clear zone —
+      // the blur the move causes must NOT commit, so the one-shot
+      // dhPrefsEscBlur flag suppresses the blur-commit (ruling V2/V3).
       const target = event.target;
       if (target && target.id === "bodysearch" && target.value) {
         dhBodySearchClear();  // clears term + box + count; LB/RB revert
@@ -2459,6 +2811,12 @@ document.addEventListener("DOMContentLoaded", () => {
       if (target && target.id === "search" && target.value) {
         target.value = "";  // symmetric clear for the quest-name box
         dhRenderIndex();
+        return;
+      }
+      if (target && target.id === "fontnum") {
+        dhPrefsEscBlur = true;  // suppress the blur-commit this move causes
+        dhPrefsRestoreNumeric();  // discard uncommitted text, send nothing
+        dhFocusSetZone("clear");  // leave prefs back to the entry zone
         return;
       }
       if (target && (target.id === "search" || target.id === "bodysearch")) {

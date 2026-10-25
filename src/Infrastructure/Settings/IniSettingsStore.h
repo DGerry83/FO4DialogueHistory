@@ -11,12 +11,16 @@ namespace F4DH::Infrastructure
 	// the main INI are honored as a fallback. The main INI is never written.
 	// The quest-bucket filter checkboxes persist the same way in a sibling
 	// FO4DialogueHistory.view.ini ([Settings] FilterMain/Side/Misc/Unattributed
-	// as 0/1; absent file or keys = all-true defaults).
+	// as 0/1; absent file or keys = all-true defaults). View preferences
+	// (font size + PauseOnOpen) persist in a sibling
+	// FO4DialogueHistory.preferences.ini whose [Settings] FontSize (1–128) and
+	// PauseOnOpen (0/1) keys override the main-INI seed independently.
 	class IniSettingsStore final : public Application::ISettingsStore
 	{
 	public:
 		[[nodiscard]] Application::Settings Load() override;
 		void SaveGeometry(const Core::PanelGeometry& a_geometry) override;
 		void SaveViewFilters(const Core::ViewFilterState& a_filters) override;
+		void SaveViewPreferences(const Core::ViewPreferences& a_preferences) override;
 	};
 }

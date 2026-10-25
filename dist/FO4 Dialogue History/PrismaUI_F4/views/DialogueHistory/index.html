@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Dialogue History</title>
+<link rel="stylesheet" href="history.css">
+</head>
+<body>
+<div id="panel">
+  <div id="header">
+    <span id="title">Dialogue History</span>
+    <span id="header-right">
+      <span id="prefs">
+        <input id="fontslider" type="range" min="10" max="32" step="1" value="16" title="Dialogue font size (10-32; use the box for 1-128)">
+        <input id="fontnum" type="text" value="16" maxlength="3" autocomplete="off" title="Font size override 1-128 (Enter to apply)">
+        <label id="pauselabel"><input id="pausebox" type="checkbox">Pause on open</label>
+      </span>
+      <button id="clear" type="button">Clear</button>
+      <span id="hint">Esc to close</span>
+    </span>
+  </div>
+  <div id="body">
+    <div id="index">
+      <input id="search" type="text" placeholder="Search quests..." autocomplete="off">
+      <div id="filters">
+        <label><input type="checkbox" id="ftype-main" checked>Main</label>
+        <label><input type="checkbox" id="ftype-side" checked>Side</label>
+        <label><input type="checkbox" id="ftype-misc" checked>Misc</label>
+        <label><input type="checkbox" id="ftype-unattributed" checked>Unattributed</label>
+      </div>
+      <div id="quests"></div>
+    </div>
+    <div id="split" title="Drag to resize panes"></div>
+    <div id="dialogue">
+      <div id="dialoguebar">
+        <span id="bodysearchcount"></span>
+        <button id="bodysearchprev" type="button" title="Previous match">&#8249;</button>
+        <button id="bodysearchnext" type="button" title="Next match">&#8250;</button>
+        <input id="bodysearch" type="text" placeholder="Search text..." autocomplete="off">
+      </div>
+      <div id="empty">No conversation recorded yet.</div>
+      <div id="log"></div>
+    </div>
+  </div>
+  <div id="overlay" hidden>
+    <div id="confirmbox">
+      <span id="overlaymsg"></span>
+      <div id="overlaybtns">
+        <button id="overlayconfirm" class="obtn" type="button">Confirm</button>
+        <button id="overlaycancel" class="obtn" type="button">Cancel</button>
+      </div>
+    </div>
+  </div>
+  <div id="grip" title="Drag to resize"></div>
+</div>
+<div id="dhtip" hidden></div>  <!-- C16: in-page tooltip (native title never renders under Ultralight) -->
+<script src="history.js"></script>
+</body>
+</html>

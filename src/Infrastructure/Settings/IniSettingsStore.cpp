@@ -2,6 +2,7 @@
 
 #include "Core/Input/ScanCodeMap.h"
 #include "Core/Input/GamepadButtonMap.h"
+#include "Core/Settings/ViewPreferences.h"
 
 #include <algorithm>
 #include <charconv>
@@ -18,8 +19,8 @@
 
 // Reads FO4DialogueHistory.ini from the folder that hosts this DLL
 // (Data/F4SE/Plugins under the game root — resolved via the module path so
-// non-standard Data locations still work). One-shot parse at kGameDataReady;
-// no file I/O anywhere else. Hand-rolled: nine keys, no dependency.
+// non-standard Data locations still work). Settings load at kGameDataReady;
+// user-gesture saves go to sibling files only. Hand-rolled, no dependency.
 //
 // M9: panel geometry lives in a SIBLING file (FO4DialogueHistory.geometry.ini)
 // that release packages never ship, so redeploying the mod folder can no
@@ -32,6 +33,7 @@ namespace
 	constexpr std::wstring_view kIniFileName{ L"FO4DialogueHistory.ini" };
 	constexpr std::wstring_view kGeometryFileName{ L"FO4DialogueHistory.geometry.ini" };
 	constexpr std::wstring_view kViewFileName{ L"FO4DialogueHistory.view.ini" };
+	constexpr std::wstring_view kPreferencesFileName{ L"FO4DialogueHistory.preferences.ini" };
 
 	[[nodiscard]] std::wstring ResolveSiblingPath(std::wstring_view a_fileName)
 	{
@@ -215,6 +217,64 @@ namespace
 		}
 		return filters;
 	}
+
+	// Section-locked [Settings] scan for the preference keys, applied on top
+	// of the main-INI seed (a_inOut). Per-key independence: a missing key
+	// leaves the seeded value; an invalid FontSize (non-integer or outside
+	// 1–128) or PauseOnOpen (not 0/1) is ignored with a warning. The sidecar
+	// widens the font range beyond the main INI's 10–32 slider seed, so the
+	// range check here is intentionally different from the main INI's.
+	void ExtractViewPreferences(const std::vector<std::string>& a_lines, F4DH::Core::ViewPreferences& a_inOut)
+	{
+		bool inSettingsSection{ false };
+
+		for (const auto& line : a_lines) {
+			std::string_view view{ line };
+
+			const auto comment = view.find_first_of(";#");
+			if (comment != std::string_view::npos) {
+				view = view.substr(0, comment);
+			}
+			view = Trim(view);
+			if (view.empty()) {
+				continue;
+			}
+
+			if (view.front() == '[' && view.back() == ']') {
+				inSettingsSection = ToLower(Trim(view.substr(1, view.size() - 2))) == "settings";
+				continue;
+			}
+			if (!inSettingsSection) {
+				continue;
+			}
+
+			const auto eq = view.find('=');
+			if (eq == std::string_view::npos) {
+				continue;
+			}
+			const auto key   = ToLower(Trim(view.substr(0, eq)));
+			const auto value = Trim(view.substr(eq + 1));
+
+			std::uint32_t parsed = 0;
+			if (key == "fontsize") {
+				if (!ParseUint(value, parsed)) {
+					REX::LogWarning("IniSettingsStore: preferences file has invalid FontSize '{}' — keeping the main-INI value", value);
+				} else if (parsed < 1 || parsed > 128) {
+					REX::LogWarning("IniSettingsStore: preferences file FontSize {} out of range 1-128 — keeping the main-INI value", parsed);
+				} else {
+					a_inOut.fontSize = static_cast<int>(parsed);
+				}
+			} else if (key == "pauseonopen") {
+				if (!ParseUint(value, parsed)) {
+					REX::LogWarning("IniSettingsStore: preferences file has invalid PauseOnOpen '{}' — keeping the main-INI value", value);
+				} else if (parsed > 1) {
+					REX::LogWarning("IniSettingsStore: preferences file PauseOnOpen {} out of range 0-1 — keeping the main-INI value", parsed);
+				} else {
+					a_inOut.pauseOnOpen = parsed == 1;
+				}
+			}
+		}
+	}
 }
 
 namespace F4DH::Infrastructure
@@ -362,10 +422,19 @@ namespace F4DH::Infrastructure
 				if (!ok) {
 					REX::LogWarning("IniSettingsStore: invalid FontSize '{}' — keeping default 16", value);
 				} else if (parsed < 10 || parsed > 32) {
-					settings.fontSize = static_cast<int>(std::clamp(parsed, 10u, 32u));
-					REX::LogWarning("IniSettingsStore: FontSize {} out of range 10-32 — clamped to {}", parsed, settings.fontSize);
+					settings.viewPreferences.fontSize = static_cast<int>(std::clamp(parsed, 10u, 32u));
+					REX::LogWarning("IniSettingsStore: FontSize {} out of range 10-32 — clamped to {}", parsed, settings.viewPreferences.fontSize);
 				} else {
-					settings.fontSize = static_cast<int>(parsed);
+					settings.viewPreferences.fontSize = static_cast<int>(parsed);
+				}
+			} else if (key == "pauseonopen") {
+				if (!ok) {
+					REX::LogWarning("IniSettingsStore: invalid PauseOnOpen '{}' — keeping default 0 (off)", value);
+				} else if (parsed > 1) {
+					settings.viewPreferences.pauseOnOpen = true;
+					REX::LogWarning("IniSettingsStore: PauseOnOpen {} out of range 0-1 — clamped to 1", parsed);
+				} else {
+					settings.viewPreferences.pauseOnOpen = parsed == 1;
 				}
 			}
 			// Panel keys are handled by ExtractPanelGeometry; unknown keys ignored.
@@ -397,6 +466,18 @@ namespace F4DH::Infrastructure
 			const auto& f = settings.viewFilters;
 			REX::LogInformation("IniSettingsStore: view filters loaded (main={} side={} misc={} unattributed={})",
 				f.main, f.side, f.misc, f.unattributed);
+		}
+
+		// Preferences sidecar: valid sibling keys override the main-INI seed
+		// independently (FontSize widens to 1-128); an absent file or an
+		// invalid/missing key keeps the seeded value.
+		const auto preferencesPath = ResolveSiblingPath(kPreferencesFileName);
+		const auto preferencesLines = ReadLines(preferencesPath);
+		if (!preferencesLines.empty()) {
+			ExtractViewPreferences(preferencesLines, settings.viewPreferences);
+			const auto& p = settings.viewPreferences;
+			REX::LogInformation("IniSettingsStore: view preferences loaded (fontSize={} pauseOnOpen={})",
+				p.fontSize, p.pauseOnOpen);
 		}
 
 		return settings;
@@ -440,5 +521,26 @@ namespace F4DH::Infrastructure
 				a_filters.misc ? 1 : 0, a_filters.unattributed ? 1 : 0);
 		REX::LogInformation("IniSettingsStore: view filters saved (main={} side={} misc={} unattributed={})",
 			a_filters.main, a_filters.side, a_filters.misc, a_filters.unattributed);
+	}
+
+	void IniSettingsStore::SaveViewPreferences(const Core::ViewPreferences& a_preferences)
+	{
+		// Same sidecar discipline as SaveGeometry/SaveViewFilters: write ONLY
+		// the sibling preferences file — never the user's main INI. Runs on
+		// the game thread at preference-commit cadence (one completed slider
+		// gesture / numeric commit / checkbox change) — bounded and
+		// infrequent.
+		const auto path = ResolveSiblingPath(kPreferencesFileName);
+
+		std::ofstream file(path, std::ios::binary | std::ios::trunc);
+		if (!file) {
+			REX::LogError(L"IniSettingsStore: failed to open {} for writing — view preferences not persisted", path);
+			return;
+		}
+		file << "[Settings]\n"
+			<< std::format("FontSize = {}\nPauseOnOpen = {}\n",
+				a_preferences.fontSize, a_preferences.pauseOnOpen ? 1 : 0);
+		REX::LogInformation("IniSettingsStore: view preferences saved (fontSize={} pauseOnOpen={})",
+			a_preferences.fontSize, a_preferences.pauseOnOpen);
 	}
 }

@@ -38,6 +38,7 @@ add_library(${PROJECT_NAME} SHARED
 	src/Core/Dialogue/StressTestDataGenerator.cpp
 	src/Core/Geometry/PanelGeometry.cpp
 	src/Core/Settings/ViewFilterState.cpp
+	src/Core/Settings/ViewPreferences.cpp
 	src/Core/Input/ScanCodeMap.cpp
 	src/Core/Input/GamepadButtonMap.cpp
 	src/Application/Capture/CapturePipeline.cpp

@@ -1,0 +1,129 @@
+#include <catch2/catch_test_macros.hpp>
+
+#include "Core/Settings/ViewPreferences.h"
+
+TEST_CASE("view preferences default to 16 px and unpaused")
+{
+	const F4DH::Core::ViewPreferences prefs;
+	REQUIRE(prefs.fontSize == 16);
+	REQUIRE(!prefs.pauseOnOpen);
+}
+
+TEST_CASE("view preferences round-trip through format and parse")
+{
+	const F4DH::Core::ViewPreferences prefs{ 24, true };
+	const auto                       json = F4DH::Core::FormatViewPreferences(prefs);
+	REQUIRE(json == "{\"fontSize\":24,\"pauseOnOpen\":true}");
+
+	F4DH::Core::ViewPreferences parsed;
+	REQUIRE(F4DH::Core::ParseViewPreferences(json, parsed));
+	REQUIRE(parsed.fontSize == 24);
+	REQUIRE(parsed.pauseOnOpen);
+}
+
+TEST_CASE("view preferences parse accepts both pause states")
+{
+	F4DH::Core::ViewPreferences parsed;
+	REQUIRE(F4DH::Core::ParseViewPreferences("{\"fontSize\":20,\"pauseOnOpen\":false}", parsed));
+	REQUIRE(parsed.fontSize == 20);
+	REQUIRE(!parsed.pauseOnOpen);
+
+	REQUIRE(F4DH::Core::ParseViewPreferences("{\"fontSize\":20,\"pauseOnOpen\":true}", parsed));
+	REQUIRE(parsed.fontSize == 20);
+	REQUIRE(parsed.pauseOnOpen);
+}
+
+TEST_CASE("view preferences parse accepts the integer font boundaries 1 and 128")
+{
+	F4DH::Core::ViewPreferences parsed;
+	REQUIRE(F4DH::Core::ParseViewPreferences("{\"fontSize\":1}", parsed));
+	REQUIRE(parsed.fontSize == 1);
+
+	REQUIRE(F4DH::Core::ParseViewPreferences("{\"fontSize\":128}", parsed));
+	REQUIRE(parsed.fontSize == 128);
+}
+
+TEST_CASE("view preferences parse rejects out-of-range font sizes without touching cached state")
+{
+	F4DH::Core::ViewPreferences parsed{ 99, true };
+	REQUIRE(!F4DH::Core::ParseViewPreferences("{\"fontSize\":0}", parsed));
+	REQUIRE(parsed.fontSize == 99);   // 0 rejected, seed kept
+	REQUIRE(parsed.pauseOnOpen);      // untouched
+
+	REQUIRE(!F4DH::Core::ParseViewPreferences("{\"fontSize\":129}", parsed));
+	REQUIRE(parsed.fontSize == 99);   // 129 rejected, seed kept
+	REQUIRE(parsed.pauseOnOpen);      // untouched
+}
+
+TEST_CASE("view preferences parse rejects fractional and non-numeric font sizes")
+{
+	F4DH::Core::ViewPreferences parsed{ 42, false };
+	REQUIRE(!F4DH::Core::ParseViewPreferences("{\"fontSize\":16.5}", parsed));
+	REQUIRE(parsed.fontSize == 42);
+	REQUIRE(!F4DH::Core::ParseViewPreferences("{\"fontSize\":abc}", parsed));
+	REQUIRE(parsed.fontSize == 42);
+	REQUIRE(!F4DH::Core::ParseViewPreferences("{\"fontSize\":16x}", parsed));
+	REQUIRE(parsed.fontSize == 42);
+	REQUIRE(!F4DH::Core::ParseViewPreferences("{\"fontSize\":-8}", parsed));
+	REQUIRE(parsed.fontSize == 42);
+	REQUIRE(!F4DH::Core::ParseViewPreferences("{\"fontSize\":1e2}", parsed));
+	REQUIRE(parsed.fontSize == 42);
+}
+
+TEST_CASE("view preferences parse treats each field independently on the seeded state")
+{
+	F4DH::Core::ViewPreferences parsed{ 88, true };
+
+	// fontSize only: pause keeps its seeded value
+	REQUIRE(F4DH::Core::ParseViewPreferences("{\"fontSize\":32}", parsed));
+	REQUIRE(parsed.fontSize == 32);
+	REQUIRE(parsed.pauseOnOpen);
+
+	// pauseOnOpen only: font keeps its current (previously parsed) value
+	REQUIRE(F4DH::Core::ParseViewPreferences("{\"pauseOnOpen\":false}", parsed));
+	REQUIRE(parsed.fontSize == 32);
+	REQUIRE(!parsed.pauseOnOpen);
+
+	// one valid + one invalid field: the valid one applies
+	REQUIRE(F4DH::Core::ParseViewPreferences("{\"fontSize\":999,\"pauseOnOpen\":true}", parsed));
+	REQUIRE(parsed.fontSize == 32);
+	REQUIRE(parsed.pauseOnOpen);
+}
+
+TEST_CASE("view preferences parse accepts fields in any order with surrounding whitespace")
+{
+	F4DH::Core::ViewPreferences parsed;
+	REQUIRE(F4DH::Core::ParseViewPreferences(
+		"{ \"pauseOnOpen\" : true ,\t\"fontSize\"\r\n:\n12 }", parsed));
+	REQUIRE(parsed.fontSize == 12);
+	REQUIRE(parsed.pauseOnOpen);
+}
+
+TEST_CASE("view preferences parse ignores extra fields")
+{
+	F4DH::Core::ViewPreferences parsed;
+	REQUIRE(F4DH::Core::ParseViewPreferences(
+		"{\"fontSize\":20,\"extra\":1,\"note\":\"x\",\"pauseOnOpen\":true}", parsed));
+	REQUIRE(parsed.fontSize == 20);
+	REQUIRE(parsed.pauseOnOpen);
+}
+
+TEST_CASE("view preferences parse rejects junk payloads without touching the output")
+{
+	F4DH::Core::ViewPreferences parsed{ 77, true };
+	REQUIRE(!F4DH::Core::ParseViewPreferences("", parsed));
+	REQUIRE(!F4DH::Core::ParseViewPreferences("not json", parsed));
+	REQUIRE(!F4DH::Core::ParseViewPreferences("{}", parsed));
+	REQUIRE(!F4DH::Core::ParseViewPreferences("[]", parsed));
+	REQUIRE(!F4DH::Core::ParseViewPreferences("{\"foo\":1}", parsed));
+	REQUIRE(!F4DH::Core::ParseViewPreferences("{\"pauseOnOpen\":1}", parsed));
+	// failed parses leave the caller's cached state untouched
+	REQUIRE(parsed.fontSize == 77);
+	REQUIRE(parsed.pauseOnOpen);
+}
+
+TEST_CASE("view preferences format emits integer font and JSON bool literal")
+{
+	REQUIRE(F4DH::Core::FormatViewPreferences({ 1, false }) == "{\"fontSize\":1,\"pauseOnOpen\":false}");
+	REQUIRE(F4DH::Core::FormatViewPreferences({ 128, true }) == "{\"fontSize\":128,\"pauseOnOpen\":true}");
+}

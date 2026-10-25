@@ -26,11 +26,13 @@ add_executable(Core.Tests
 	StressTestDataGeneratorTests.cpp
 	ScanCodeMapTests.cpp
 	GamepadButtonMapTests.cpp
+	ViewPreferencesTests.cpp
 	${CMAKE_SOURCE_DIR}/src/Core/Dialogue/PayloadBuilder.cpp
 	${CMAKE_SOURCE_DIR}/src/Core/Dialogue/CosaveCodec.cpp
 	${CMAKE_SOURCE_DIR}/src/Core/Dialogue/StressTestDataGenerator.cpp
 	${CMAKE_SOURCE_DIR}/src/Core/Geometry/PanelGeometry.cpp
 	${CMAKE_SOURCE_DIR}/src/Core/Settings/ViewFilterState.cpp
+	${CMAKE_SOURCE_DIR}/src/Core/Settings/ViewPreferences.cpp
 	${CMAKE_SOURCE_DIR}/src/Core/Input/ScanCodeMap.cpp
 	${CMAKE_SOURCE_DIR}/src/Core/Input/GamepadButtonMap.cpp
 )

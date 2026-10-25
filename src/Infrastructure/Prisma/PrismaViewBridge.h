@@ -6,6 +6,7 @@
 #include "Application/View/IViewBridge.h"
 #include "Core/Geometry/PanelGeometry.h"
 #include "Core/Settings/ViewFilterState.h"
+#include "Core/Settings/ViewPreferences.h"
 #include "PrismaUI_F4_API.h"
 
 namespace F4DH::Application
@@ -46,8 +47,16 @@ namespace F4DH::Infrastructure
 		[[nodiscard]] bool ControllerActionsAvailable() const;
 
 		// Configured base font size, pushed to the view ahead of each
-		// snapshot (C5 wiring; set once after the INI load).
+		// snapshot (C5 wiring; set once after the INI load). Seeds the
+		// cached preference value; SetViewPreferences supersedes it.
 		void SetFontSize(int fontSize) noexcept;
+
+		// View preferences (font size + pause-on-open). SetViewPreferences
+		// seeds from the INI at composition time and caches the latest
+		// committed state; PauseOnOpen exposes the cached flag to the
+		// OnDomReady focus replay.
+		void SetViewPreferences(const Core::ViewPreferences& preferences) noexcept;
+		[[nodiscard]] bool PauseOnOpen() const noexcept;
 
 		// M5: persisted panel geometry. SetGeometry seeds from the INI at
 		// composition time and caches the latest view report; SetSettingsSink
@@ -75,6 +84,21 @@ namespace F4DH::Infrastructure
 		// PushSnapshot and OnDomReady (same first-open race as ApplyGeometry).
 		void ApplyFilters();
 
+		// Persisted view preferences (font + pause). HandleViewPreferencesReport
+		// is the game-thread entry for a view viewPreferencesChanged report:
+		// tolerant Core parse into a copy of the cache, cache update, sidecar
+		// persistence, and — when the pause value changed while the panel is
+		// focused — the ordered Unfocus/Focus refocus (PrismaUI ignores Focus
+		// on an already-focused view, so a live pause change needs the balanced
+		// cycle). Malformed payloads never alter the cache or the sidecar.
+		void HandleViewPreferencesReport(const std::string& jsonPayload);
+
+		// InteropCall setViewPreferences when healthy. Called on the game
+		// thread from PushSnapshot and OnDomReady (same first-open race as
+		// ApplyGeometry/ApplyFilters). The view keeps the legacy setFontSize
+		// entry point for compatibility with older native builds.
+		void ApplyViewPreferences();
+
 		// C8: report the active input device via InteropCall setInputDevice so
 		// the view can tailor its hint chrome. Runs only when the runtime
 		// exposed V12 (IsUsingGamepad is a V9 virtual — safe through the V12
@@ -96,7 +120,8 @@ namespace F4DH::Infrastructure
 		ClearQuestCallback                 _clearQuestCallback = nullptr;
 		ClearQuestsCallback                _clearQuestsCallback = nullptr;
 		TypingStateCallback                _typingStateCallback;  // #005: empty until Composition wires it
-		int                                _fontSize{ 16 };
+		Core::ViewPreferences              _preferences;  // cached view preferences (16/false until seeded); pushed to the view ahead of each snapshot
+		bool                               _focused{ false };  // set by Focus(), cleared by Unfocus()/Hide(); gates the live pause-change refocus
 		std::optional<Core::PanelGeometry> _geometry;
 		Core::ViewFilterState              _filters;
 		Application::ISettingsStore*       _settingsStore = nullptr;

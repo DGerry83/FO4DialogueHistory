@@ -10,6 +10,11 @@
   <div id="header">
     <span id="title">Dialogue History</span>
     <span id="header-right">
+      <span id="prefs">
+        <input id="fontslider" type="range" min="10" max="32" step="1" value="16" title="Dialogue font size (10-32; use the box for 1-128)">
+        <input id="fontnum" type="text" value="16" maxlength="3" autocomplete="off" title="Font size override 1-128 (Enter to apply)">
+        <label id="pauselabel"><input id="pausebox" type="checkbox">Pause on open</label>
+      </span>
       <button id="clear" type="button">Clear</button>
       <span id="hint">Esc to close</span>
     </span>
