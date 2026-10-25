@@ -122,6 +122,81 @@ TEST_CASE("view preferences parse rejects junk payloads without touching the out
 	REQUIRE(parsed.pauseOnOpen);
 }
 
+TEST_CASE("view preferences parse rejects malformed wrappers that quote member keys", "[structural]")
+{
+	F4DH::Core::ViewPreferences parsed{ 99, true };
+	REQUIRE(!F4DH::Core::ParseViewPreferences("not json \"fontSize\":128", parsed));
+	REQUIRE(!F4DH::Core::ParseViewPreferences("garbage \"pauseOnOpen\":true", parsed));
+	REQUIRE(!F4DH::Core::ParseViewPreferences("\"fontSize\":128", parsed));      // bare member, no object wrapper
+	REQUIRE(!F4DH::Core::ParseViewPreferences("{\"fontSize\":128", parsed));     // unterminated object
+	REQUIRE(parsed.fontSize == 99);   // wholesale rejection: cached state untouched
+	REQUIRE(parsed.pauseOnOpen);
+}
+
+TEST_CASE("view preferences parse ignores quoted key lookalikes inside string values", "[structural]")
+{
+	F4DH::Core::ViewPreferences parsed{ 16, false };
+	// audit example: the escaped lookalike inside "note" must not shadow the real member
+	REQUIRE(F4DH::Core::ParseViewPreferences("{\"note\":\"\\\"fontSize\\\":999\",\"fontSize\":20}", parsed));
+	REQUIRE(parsed.fontSize == 20);
+	REQUIRE(!parsed.pauseOnOpen);
+	// in-range lookalike would have hijacked the value under substring search
+	parsed = { 16, false };
+	REQUIRE(F4DH::Core::ParseViewPreferences("{\"note\":\"\\\"fontSize\\\":50\",\"fontSize\":20}", parsed));
+	REQUIRE(parsed.fontSize == 20);
+}
+
+TEST_CASE("view preferences parse ignores key lookalikes inside nested objects and arrays", "[structural]")
+{
+	F4DH::Core::ViewPreferences parsed{ 16, false };
+	REQUIRE(F4DH::Core::ParseViewPreferences("{\"extra\":{\"fontSize\":50},\"fontSize\":20}", parsed));
+	REQUIRE(parsed.fontSize == 20);   // nested-object lookalike does not shadow
+	parsed = { 16, false };
+	REQUIRE(F4DH::Core::ParseViewPreferences("{\"extra\":[\"pauseOnOpen\",true],\"pauseOnOpen\":false}", parsed));
+	REQUIRE(!parsed.pauseOnOpen);     // array lookalike does not shadow
+	REQUIRE(parsed.fontSize == 16);
+}
+
+TEST_CASE("view preferences parse rejects trailing junk after the closing brace", "[structural]")
+{
+	F4DH::Core::ViewPreferences parsed{ 55, true };
+	REQUIRE(!F4DH::Core::ParseViewPreferences("{\"fontSize\":20} garbage", parsed));
+	REQUIRE(!F4DH::Core::ParseViewPreferences("{\"fontSize\":20,\"pauseOnOpen\":true} x", parsed));
+	REQUIRE(!F4DH::Core::ParseViewPreferences("{\"fontSize\":20}}", parsed));
+	REQUIRE(parsed.fontSize == 55);   // a valid-looking field never legitimizes junk
+	REQUIRE(parsed.pauseOnOpen);
+}
+
+TEST_CASE("view preferences parse still accepts a complete valid object with extra fields", "[structural]")
+{
+	F4DH::Core::ViewPreferences parsed{ 16, false };
+	REQUIRE(F4DH::Core::ParseViewPreferences(
+		"{\"fontSize\":28,\"extra\":{\"deep\":[1,2,{\"pauseOnOpen\":true}]},\"note\":\"text\",\"pauseOnOpen\":true}", parsed));
+	REQUIRE(parsed.fontSize == 28);
+	REQUIRE(parsed.pauseOnOpen);
+}
+
+TEST_CASE("view preferences parse rejects mismatched nested brackets", "[structural]")
+{
+	F4DH::Core::ViewPreferences parsed{ 66, true };
+	// the '}' does not close '[': the malformed extra value must fail wholesale
+	REQUIRE(!F4DH::Core::ParseViewPreferences("{\"extra\":[}],\"fontSize\":20}", parsed));
+	REQUIRE(!F4DH::Core::ParseViewPreferences("{\"extra\":[{]},\"fontSize\":20}", parsed));
+	REQUIRE(!F4DH::Core::ParseViewPreferences("{\"extra\":{\"a\":1],\"fontSize\":20}", parsed));
+	REQUIRE(parsed.fontSize == 66);   // cached state untouched
+	REQUIRE(parsed.pauseOnOpen);
+}
+
+TEST_CASE("view preferences parse rejects trailing commas", "[structural]")
+{
+	F4DH::Core::ViewPreferences parsed{ 44, true };
+	REQUIRE(!F4DH::Core::ParseViewPreferences("{\"fontSize\":20,}", parsed));
+	REQUIRE(!F4DH::Core::ParseViewPreferences("{\"fontSize\":20, }", parsed));
+	REQUIRE(!F4DH::Core::ParseViewPreferences("{\"fontSize\":20,\"pauseOnOpen\":true,}", parsed));
+	REQUIRE(parsed.fontSize == 44);   // cached state untouched
+	REQUIRE(parsed.pauseOnOpen);
+}
+
 TEST_CASE("view preferences format emits integer font and JSON bool literal")
 {
 	REQUIRE(F4DH::Core::FormatViewPreferences({ 1, false }) == "{\"fontSize\":1,\"pauseOnOpen\":false}");
