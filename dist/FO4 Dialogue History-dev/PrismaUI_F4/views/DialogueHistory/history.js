@@ -1809,8 +1809,9 @@ function dhPrefsCommitNumeric() {
   dhPrefsCommitFont(v);
 }
 
-/* Slider keyboard step (focus model): +/-1 with preview + one combined
- * commit; an endpoint press consumes the key but sends nothing. */
+/* Slider keyboard step (focus model): +/-1 with full body/header
+ * application + one combined commit; an endpoint press consumes the key
+ * but sends nothing. */
 function dhPrefsSliderStep(dir) {
   const slider = document.getElementById("fontslider");
   if (!slider) {

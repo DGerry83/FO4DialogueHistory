@@ -1,10 +1,10 @@
 /* Dialogue History view — visual system per DESIGN_SPEC.md §6.3.
- * 2026-10-25 panel-wide typography: every fixed font size below is
- * proportional to the root --dh-font-scale custom property (default 1),
- * which history.js setFontSize writes as size/16 — one write scales the
- * whole panel (title, chrome, rows, overlay, tooltip). Chrome without an
- * explicit size inherits the scaled html/body base. #log additionally
- * carries the plugin's inline px so virtualized row heights stay exact. */
+ * 2026-10-25 panel-wide typography: fixed font sizes use the root body
+ * scale, while #header substitutes its own deferred channel. Full
+ * setFontSize applications write body root + header element; slider input
+ * writes only body. Chrome without an explicit size inherits the scaled
+ * html/body base. #log additionally carries inline px so virtualized row
+ * heights stay exact. */
 
 :root {
   --dh-font-scale: 1;  /* 16 px reference — setFontSize writes size/16 */
