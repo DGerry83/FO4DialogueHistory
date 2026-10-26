@@ -23,6 +23,7 @@ add_executable(Core.Tests
 	MessageBufferTests.cpp
 	MessagePayloadBuilderTests.cpp
 	MessageCosaveCodecTests.cpp
+	MessageContentFilterTests.cpp
 	PanelGeometryTests.cpp
 	ViewFilterStateTests.cpp
 	AliasTokensTests.cpp

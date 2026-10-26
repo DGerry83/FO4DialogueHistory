@@ -3,6 +3,7 @@
 #include <format>
 
 #include "Application/View/ViewController.h"
+#include "Core/Message/MessageContentFilter.h"
 
 namespace F4DH::Application
 {
@@ -15,7 +16,7 @@ namespace F4DH::Application
 
 	void MessageCapturePipeline::OnMessage(const MessageEvent& event)
 	{
-		const bool accepted = !event.text.empty();
+		const bool accepted = Core::MessageContentFilter::ShouldCapture(event.text);
 		if (_verboseCapture) {
 			_logger.Info(std::format(
 				"message: warning={} radio={} throttle={} -> {} | {}",
