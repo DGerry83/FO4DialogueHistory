@@ -8,9 +8,9 @@ namespace F4DH::Application
 namespace F4DH::Infrastructure
 {
 	// Observer on the engine's accepted-for-display HUD message value. A
-	// continuation-safe GameUIModel::UpdateDataModels hook calls the original
-	// first, then reads HUDDataModel::messagesModel.nextMessageData under its
-	// lock and emits only new values. Empty/unchanged updates allocate nothing;
+	// REL::HookVft hook on HUDDataModel::PerformInputProcessing calls the
+	// original first, then reads messagesModel.nextMessageData under its lock
+	// and emits only new values. Empty/unchanged updates allocate nothing;
 	// engine data is never mutated. Installed once at kGameDataReady for the
 	// process lifetime, with no teardown.
 	namespace HudMessageSink
