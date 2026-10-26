@@ -7,14 +7,12 @@ namespace F4DH::Application
 
 namespace F4DH::Infrastructure
 {
-	// Passive observer on the engine's accepted-for-display HUD message
-	// channel: the global BSTGlobalEvent::EventSource<HUDMessageDisplayDataEvent>
-	// (the value the HUDMessagesModel broadcasts when it supplies the HUD's
-	// next display payload — throttled/suppressed submissions never reach it;
-	// see the session ARCHITECTURE_CONTRACT). The sink only ever observes:
-	// it returns kContinue, never consumes or mutates the event, performs no
-	// I/O or form lookups, and copies the resolved text into owned storage.
-	// Installed once at kGameDataReady; process-lifetime, no teardown.
+	// Observer on the engine's accepted-for-display HUD message value. A
+	// continuation-safe GameUIModel::UpdateDataModels hook calls the original
+	// first, then reads HUDDataModel::messagesModel.nextMessageData under its
+	// lock and emits only new values. Empty/unchanged updates allocate nothing;
+	// engine data is never mutated. Installed once at kGameDataReady for the
+	// process lifetime, with no teardown.
 	namespace HudMessageSink
 	{
 		// Returns false when the display-data event source cannot be located

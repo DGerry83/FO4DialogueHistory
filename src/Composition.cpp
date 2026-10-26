@@ -423,9 +423,9 @@ namespace F4DH
 			return false;
 		}
 
-		// Message History v1.3.0: passive accepted-display HUD message capture.
+		// Message History v1.3.0: accepted-display HUD model observation.
 		// Degraded, never fatal — dialogue capture and persistence keep working
-		// when the display-data event source is unavailable.
+		// when the GameUIModel update observer cannot be installed.
 		if (!Infrastructure::HudMessageSink::Install(messagePipeline)) {
 			root.log.Error("HUD message sink unavailable — message history disabled (dialogue history unaffected)");
 		}

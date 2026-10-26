@@ -2,75 +2,141 @@
 
 #include "Application/Capture/IMessageSink.h"
 
-#include "REL/Relocation.hpp"
+#include "REL/REL.hpp"
 
-#include "RE/B/BSTEvent.hpp"
-#include "RE/H/HUDMessageDisplayDataEvent.hpp"
-#include "RE/IDs_RTTI.hpp"
+#include "RE/B/BSSpinLock.hpp"
+#include "RE/G/GameUIModel.hpp"
+#include "RE/H/HUDDataModel.hpp"
 
 #include "REX/Log.hpp"
 
-// HUD message display-data observation (Message History v1.3.0).
+#include <cstring>
+
+// Accepted-display observation through the engine's live HUD data model.
+// GameUIModel::UpdateDataModels runs the original model update first; the
+// observer then reads nextMessageData under its lock and emits only value
+// transitions. The earlier RTTI-slot registration was invalid: RTTI metadata
+// is not the global EventSource storage and must never be dereferenced as such.
 //
-// Code-evidence summary (see the session Phase-0 record): the AV fork exposes
-// no plain event source for HUDMessageDisplayDataEvent — it is a
-// BSTValueEvent<ShowHUDMessageEvent> whose only header-visible carrier is the
-// HUDMessagesModel's pull-model BSTValueEventSource. The engine nonetheless
-// publishes every accepted-display value on the global event bus: the desktop
-// database lists BSTGlobalEvent::Notify<HUDMessageDisplayDataEvent> /
-// RegisterSink<HUDMessageDisplayDataEvent> instantiations and the
-// BSTValueEventSource<HUDMessageDisplayDataEvent>::SetValue/BroadcastEvent
-// pair, and the fork's own RTTI tables carry the global source's SDM
-// static-buffer slot IDs for OG/NG/AE. Subscribing a BSTEventSink on that
-// global source is therefore the passive accepted-display boundary the
-// approved design selects. The sibling submission event
-// (ShowHUDMessageEvent) is header-evidenced as the pre-throttle path
-// (HUDMessagesModel queues it into queuedMessages/throttles) and is NOT used.
-//
-// Threading: the broadcast runs on whichever engine thread updates the HUD
-// model; the sink does nothing but copy text into owned storage and hand it
-// to the Application pipeline (mutex-guarded buffer; the Prisma bridge
-// self-marshals to the game thread). Runtime delivery verification is a G1
-// item.
+// Hot path: unchanged or value-less updates perform pointer/flag comparisons
+// only. Strings and MessageEvent allocation happen only for a new nonempty
+// display value. Engine data is never mutated.
 
 namespace
 {
-	using EventSource_t = RE::BSTGlobalEvent::EventSource<RE::HUDMessageDisplayDataEvent>;
+	using UpdateDataModels_t = void(RE::GameUIModel*);
 
-	// Address Library variant IDs of the global source's SDM static-buffer
-	// slot (the storage that holds the EventSource<HUDMessageDisplayDataEvent>*
-	// the engine Notifies). Sourced from the AV fork's own RTTI tables
-	// (RE/IDs_RTTI.hpp) and cross-checked against the desktop database dump;
-	// the same ID namespace as the project's verified ShowSubtitle entry.
-	constexpr auto kDisplayDataSourceSlot = RE::RTTI::BSTSingletonSDMOpStaticBuffer_BSTGlobalEvent__EventSource_HUDMessageDisplayDataEvent__;
+	constexpr auto kUpdateDataModels = RE::ID::GameUIModel::UpdateDataModels;
+	constexpr std::size_t kStolenBytes{ sizeof(REL::Asm::Jump5) };
 
 	F4DH::Application::IMessageSink* g_sink{ nullptr };
+	UpdateDataModels_t*              g_original{ nullptr };
+	bool                             g_hadDisplayValue{ false };
+	const char*                      g_lastText{ nullptr };
+	bool                             g_lastWarning{ false };
+	bool                             g_lastRadio{ false };
+	bool                             g_lastThrottle{ false };
 
-	class DisplayDataSink final : public RE::BSTEventSink<RE::HUDMessageDisplayDataEvent>
+	class HookPrologue5 final : public REL::IHookFn<UpdateDataModels_t>
 	{
 	public:
-		RE::BSEventNotifyControl ProcessEvent(const RE::HUDMessageDisplayDataEvent& a_event, RE::BSTEventSource<RE::HUDMessageDisplayDataEvent>*) override
+		using value_type = std::decay_t<UpdateDataModels_t>;
+
+		HookPrologue5(std::string a_name, const REL::IId& a_id, const value_type& a_newFunc) :
+			IHookFn(std::move(a_name), a_id, 0, a_newFunc)
 		{
-			// A cleared/absent value (HUD hiding the current message) is not a
-			// display occurrence. Never mutate or consume: kContinue always.
-			if (g_sink && a_event.optionalValue.has_value()) {
-				const auto& show = a_event.optionalValue.value();
-
-				F4DH::Application::MessageEvent event;
-				event.text = show.MessageText.c_str() ? show.MessageText.c_str() : "";
-				event.isWarningMessage = show.IsWarningMessage;
-				event.isRadioMessage = show.IsRadioMessage;
-				event.canBeThrottled = show.CanBeThrottled;
-
-				g_sink->OnMessage(event);
-			}
-			return RE::BSEventNotifyControl::kContinue;
+			InitData();
 		}
+
+		~HookPrologue5() noexcept override = default;
+
+		HookPrologue5(const HookPrologue5&) = delete;
+		HookPrologue5(HookPrologue5&&) noexcept = default;
+		HookPrologue5& operator=(const HookPrologue5&) = delete;
+		HookPrologue5& operator=(HookPrologue5&&) noexcept = default;
+
+		[[nodiscard]] std::string_view GetTypeName() const noexcept override { return "Prologue5"; }
+		[[nodiscard]] value_type GetContinuation() const noexcept { return _continuation; }
+
+	protected:
+		void InitNewBytes() override
+		{
+			const auto assembly = REL::Asm::Jump5(
+				this->_address,
+				REL::GetTrampoline()->AllocateBranch5(this->_newFunc.GetAddress()));
+			REL::WriteData(std::span(this->_newBytes), assembly);
+
+			auto* continuation = std::bit_cast<std::byte*>(_continuation);
+			std::memcpy(continuation, this->_oldBytes.data(), kStolenBytes);
+			const REL::Asm::Jump14 jmpBack(this->_address + kStolenBytes);
+			std::memcpy(continuation + kStolenBytes, &jmpBack, sizeof(jmpBack));
+		}
+
+	private:
+		void InitData()
+		{
+			this->_size = kStolenBytes;
+			this->_trampolineSize = sizeof(REL::Asm::Jump14) + kStolenBytes + sizeof(REL::Asm::Jump14);
+
+			const auto continuation = REL::GetTrampoline()->Allocate(kStolenBytes + sizeof(REL::Asm::Jump14));
+			const auto continuationAddr = std::bit_cast<std::uintptr_t>(continuation);
+			_continuation = std::bit_cast<value_type>(continuationAddr);
+			this->_oldFunc = continuationAddr;
+		}
+
+		value_type _continuation{ nullptr };
 	};
 
-	// Static storage duration: zero runtime allocation, alive for the process
-	// lifetime (F4SE plugins never unload).
-	DisplayDataSink g_displayDataSink;
+	void ObserveDisplayValue()
+	{
+		auto* hud = RE::HUDDataModel::GetSingleton();
+		if (!hud) {
+			g_hadDisplayValue = false;
+			g_lastText = nullptr;
+			return;
+		}
+
+		auto& display = hud->messagesModel.nextMessageData;
+		const auto displayLock = RE::BSAutoLock(display.dataLock);
+		if (!display.optionalValue.has_value()) {
+			g_hadDisplayValue = false;
+			g_lastText = nullptr;
+			return;
+		}
+
+		const auto& show = display.optionalValue.value();
+		const char* text = show.MessageText.c_str();
+		const bool unchanged = g_hadDisplayValue && g_lastText == text &&
+			g_lastWarning == show.IsWarningMessage &&
+			g_lastRadio == show.IsRadioMessage &&
+			g_lastThrottle == show.CanBeThrottled;
+		if (unchanged) {
+			return;
+		}
+
+		g_hadDisplayValue = true;
+		g_lastText = text;
+		g_lastWarning = show.IsWarningMessage;
+		g_lastRadio = show.IsRadioMessage;
+		g_lastThrottle = show.CanBeThrottled;
+
+		if (!g_sink || !text || text[0] == '\0') {
+			return;
+		}
+
+		F4DH::Application::MessageEvent event;
+		event.text = text;
+		event.isWarningMessage = show.IsWarningMessage;
+		event.isRadioMessage = show.IsRadioMessage;
+		event.canBeThrottled = show.CanBeThrottled;
+		g_sink->OnMessage(event);
+	}
+
+	void thunk(RE::GameUIModel* a_model)
+	{
+		g_original(a_model);
+		ObserveDisplayValue();
+	}
 }
 
 namespace F4DH::Infrastructure
@@ -78,33 +144,24 @@ namespace F4DH::Infrastructure
 	bool HudMessageSink::Install(Application::IMessageSink& a_sink)
 	{
 		if (g_sink) {
-			return true;  // idempotent — installed for process lifetime
+			return true;
 		}
 
-		static const auto storage = REL::Relocation<EventSource_t**>{ kDisplayDataSourceSlot };
-		auto*             source = *storage;
-		if (!source) {
-			// Engine has not created the source yet (no HUD message ever
-			// displayed / subsystem not initialized): create it through the
-			// SDM killer exactly like the proven libxse global-event pattern,
-			// so the engine's later Notify<T> calls reach this instance.
-			auto* global = RE::BSTGlobalEvent::GetSingleton();
-			if (!global) {
-				REX::LogError("HudMessageSink: BSTGlobalEvent unavailable — message capture disabled");
-				return false;
-			}
-			source = new EventSource_t(global->eventSourceSDMKiller);
-			*storage = source;
-			REX::LogInformation("HudMessageSink: created HUDMessageDisplayDataEvent global event source");
+		auto& trampoline = REL::GetTrampoline();
+		if (trampoline->IsEmpty()) {
+			trampoline->Create(1 << 8);
 		}
 
-		if (!source->RegisterSink(&g_displayDataSink)) {
-			REX::LogError("HudMessageSink: failed to register display-data sink — message capture disabled");
+		static std::shared_ptr<HookPrologue5> hook;
+		hook = std::make_shared<HookPrologue5>("GameUIModel::UpdateDataModels", kUpdateDataModels, &thunk);
+		if (!hook->Init()) {
+			REX::LogError("HudMessageSink: failed to install GameUIModel::UpdateDataModels observer — message capture disabled");
 			return false;
 		}
+		g_original = hook->GetContinuation();
 
 		g_sink = &a_sink;
-		REX::LogInformation("HudMessageSink: HUD message display-data sink registered (accepted-display capture active)");
+		REX::LogInformation("HudMessageSink: GameUIModel::UpdateDataModels observer installed (accepted-display capture active)");
 		return true;
 	}
 }
