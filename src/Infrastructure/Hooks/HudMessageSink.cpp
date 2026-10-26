@@ -11,6 +11,7 @@
 #include "REX/Log.hpp"
 
 #include <cstring>
+#include <optional>
 
 // Accepted-display observation through the engine's live HUD data model.
 // GameUIModel::UpdateDataModels runs the original model update first; the
@@ -96,40 +97,44 @@ namespace
 			return;
 		}
 
-		auto& display = hud->messagesModel.nextMessageData;
-		const auto displayLock = RE::BSAutoLock(display.dataLock);
-		if (!display.optionalValue.has_value()) {
-			g_hadDisplayValue = false;
-			g_lastText = nullptr;
-			return;
+		std::optional<F4DH::Application::MessageEvent> event;
+		{
+			auto& display = hud->messagesModel.nextMessageData;
+			const auto displayLock = RE::BSAutoLock(display.dataLock);
+			if (!display.optionalValue.has_value()) {
+				g_hadDisplayValue = false;
+				g_lastText = nullptr;
+				return;
+			}
+
+			const auto& show = display.optionalValue.value();
+			const char* text = show.MessageText.c_str();
+			const bool unchanged = g_hadDisplayValue && g_lastText == text &&
+				g_lastWarning == show.IsWarningMessage &&
+				g_lastRadio == show.IsRadioMessage &&
+				g_lastThrottle == show.CanBeThrottled;
+			if (unchanged) {
+				return;
+			}
+
+			g_hadDisplayValue = true;
+			g_lastText = text;
+			g_lastWarning = show.IsWarningMessage;
+			g_lastRadio = show.IsRadioMessage;
+			g_lastThrottle = show.CanBeThrottled;
+
+			if (!g_sink || !text || text[0] == '\0') {
+				return;
+			}
+
+			event.emplace();
+			event->text = text;
+			event->isWarningMessage = show.IsWarningMessage;
+			event->isRadioMessage = show.IsRadioMessage;
+			event->canBeThrottled = show.CanBeThrottled;
 		}
 
-		const auto& show = display.optionalValue.value();
-		const char* text = show.MessageText.c_str();
-		const bool unchanged = g_hadDisplayValue && g_lastText == text &&
-			g_lastWarning == show.IsWarningMessage &&
-			g_lastRadio == show.IsRadioMessage &&
-			g_lastThrottle == show.CanBeThrottled;
-		if (unchanged) {
-			return;
-		}
-
-		g_hadDisplayValue = true;
-		g_lastText = text;
-		g_lastWarning = show.IsWarningMessage;
-		g_lastRadio = show.IsRadioMessage;
-		g_lastThrottle = show.CanBeThrottled;
-
-		if (!g_sink || !text || text[0] == '\0') {
-			return;
-		}
-
-		F4DH::Application::MessageEvent event;
-		event.text = text;
-		event.isWarningMessage = show.IsWarningMessage;
-		event.isRadioMessage = show.IsRadioMessage;
-		event.canBeThrottled = show.CanBeThrottled;
-		g_sink->OnMessage(event);
+		g_sink->OnMessage(*event);
 	}
 
 	void thunk(RE::GameUIModel* a_model)
