@@ -37,6 +37,19 @@ namespace
 	bool                             g_lastWarning{ false };
 	bool                             g_lastRadio{ false };
 	bool                             g_lastThrottle{ false };
+	bool                             g_verboseDiagnostics{ false };
+	std::uint32_t                    g_updateCount{ 0 };
+
+	void LogUpdate()
+	{
+		if (!g_verboseDiagnostics) {
+			return;
+		}
+		++g_updateCount;
+		if (g_updateCount == 1 || g_updateCount % 600 == 0) {
+			REX::LogInformation("HudMessageSink diagnostic: GameUIModel update #{}", g_updateCount);
+		}
+	}
 
 	class HookPrologue5 final : public REL::IHookFn<UpdateDataModels_t>
 	{
@@ -134,23 +147,28 @@ namespace
 			event->canBeThrottled = show.CanBeThrottled;
 		}
 
+		if (g_verboseDiagnostics) {
+			REX::LogInformation("HudMessageSink diagnostic: display value transition '{}'", event->text.substr(0, 60));
+		}
 		g_sink->OnMessage(*event);
 	}
 
 	void thunk(RE::GameUIModel* a_model)
 	{
 		g_original(a_model);
+		LogUpdate();
 		ObserveDisplayValue();
 	}
 }
 
 namespace F4DH::Infrastructure
 {
-	bool HudMessageSink::Install(Application::IMessageSink& a_sink)
+	bool HudMessageSink::Install(Application::IMessageSink& a_sink, bool a_verboseDiagnostics)
 	{
 		if (g_sink) {
 			return true;
 		}
+		g_verboseDiagnostics = a_verboseDiagnostics;
 
 		auto& trampoline = REL::GetTrampoline();
 		if (trampoline->IsEmpty()) {

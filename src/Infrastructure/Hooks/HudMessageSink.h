@@ -15,9 +15,9 @@ namespace F4DH::Infrastructure
 	// process lifetime, with no teardown.
 	namespace HudMessageSink
 	{
-		// Returns false when the display-data event source cannot be located
-		// or created — message capture stays disabled, dialogue capture and
-		// everything else keep working (degraded, never fatal).
-		bool Install(Application::IMessageSink& sink);
+		// Returns false when the update observer cannot be installed — message
+		// capture stays disabled and everything else keeps working. Verbose
+		// diagnostics log the first and each 600th update plus value transitions.
+		bool Install(Application::IMessageSink& sink, bool verboseDiagnostics);
 	}
 }
