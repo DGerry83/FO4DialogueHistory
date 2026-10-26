@@ -29,7 +29,7 @@ namespace F4DH::Application
 
 		void Toggle();       // hotkey
 		void NotifyLine();   // a new line was recorded; append if Open
-		void NotifyMessage();  // a new message was recorded; append if Open
+		void NotifyMessage();  // a new message was recorded; append or capped snapshot if Open
 		void OnCloseRequested();  // Esc / JS closeRequested
 
 		// Confirmed clear-history requests from the view (routed through

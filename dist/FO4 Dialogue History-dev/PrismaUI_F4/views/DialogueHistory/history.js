@@ -1444,6 +1444,17 @@ function setMessageHistory(msgs) {
   if (!Array.isArray(msgs)) {
     msgs = [];
   }
+  const log = document.getElementById("msglog");
+  const active = dhPanelMessages() && !!log;
+  /* Capacity-refresh preservation (Phase 3 audit): ViewController pushes a
+   * full snapshot (instead of an append) whenever the native message
+   * buffer is full, so this can arrive on the ACTIVE tab. Capture the
+   * reading position BEFORE the model/DOM is replaced — at-bottom readers
+   * snap to the newest entry; scrolled-up readers keep their exact
+   * scrollTop through the anchored render (same contract as live
+   * appends). */
+  const atBottom = active && (log.scrollTop + log.clientHeight >= log.scrollHeight - 4);
+  const keepScroll = active ? log.scrollTop : 0;
   mhMessages.length = 0;
   for (const raw of msgs) {
     const msg = mhNormalizeMessage(raw);
@@ -1451,13 +1462,17 @@ function setMessageHistory(msgs) {
       mhMessages.push(msg);
     }
   }
-  if (!dhPanelMessages() || !document.getElementById("msglog")) {
+  if (!active) {
     mhRebuildView();   // the view tracks the new model (measurements reset —
                        // a replace makes them meaningless)
     mhDomDirty = true; // the mounted DOM, if any, belongs to the old model
     return;
   }
-  mhRenderLog();
+  if (atBottom) {
+    mhRenderLog();           // snap to the newest entry
+  } else {
+    mhRenderLog(keepScroll); // anchored re-render preserves the position
+  }
 }
 
 /* ---- plugin -> JS: one live message ----

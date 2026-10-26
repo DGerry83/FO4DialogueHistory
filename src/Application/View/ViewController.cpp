@@ -89,12 +89,17 @@ namespace F4DH::Application
 	void ViewController::NotifyMessage()
 	{
 		// Mirror of NotifyLine on the independent message channel: the panel
-		// appends live only while open; hidden/closed panels skip the push and
-		// receive the buffer's next snapshot on open. Safe from any engine
-		// thread — the bridge marshals to the game thread exactly like AppendLine.
+		// updates live only while open; hidden/closed panels receive the next
+		// snapshot on open. A full buffer needs a capped snapshot so the view
+		// evicts its oldest row too; the view preserves a scrolled-up reader.
 		if (_state == ViewState::Open) {
 			const auto messages = _messageBuffer.Snapshot();
-			if (!messages.empty()) {
+			if (messages.empty()) {
+				return;
+			}
+			if (messages.size() >= _messageBuffer.Capacity()) {
+				_bridge.PushMessageSnapshot(Core::MessagePayloadBuilder::BuildSnapshot(messages));
+			} else {
 				_bridge.AppendMessage(Core::MessagePayloadBuilder::BuildAppend(messages.back()));
 			}
 		}
