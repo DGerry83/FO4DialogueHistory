@@ -346,29 +346,34 @@ namespace F4DH::Infrastructure::Notes
 		// (seq931-942) adds a fourth candidate when the reference exists:
 		// inherited description with the REFERENCE as parent — the route most
 		// likely to carry stored/alias-resolved instance text.
+		a_log.Info(std::format("note probe [seq {}]: text-stage inherited begin", a_obs.seq));
 		RE::BSString inheritedText;
 		book->GetDescription(inheritedText, nullptr);
+		a_log.Info(std::format("note probe [seq {}]: text-stage inherited end", a_obs.seq));
 		const std::string_view inheritedView = inheritedText.c_str() ? std::string_view(inheritedText.c_str()) : std::string_view{};
 		const TextStats inheritedStats = AnalyzeText(inheritedView);
 
+		a_log.Info(std::format("note probe [seq {}]: text-stage itemCard begin", a_obs.seq));
 		RE::BSString itemCardText;
 		book->itemCardDescription.GetDescription(itemCardText, book);
+		a_log.Info(std::format("note probe [seq {}]: text-stage itemCard end", a_obs.seq));
 		const std::string_view itemCardView = itemCardText.c_str() ? std::string_view(itemCardText.c_str()) : std::string_view{};
 		const TextStats itemCardStats = AnalyzeText(itemCardView);
 
+		a_log.Info(std::format("note probe [seq {}]: text-stage formDesc begin", a_obs.seq));
 		const auto formDescription = RE::TESDescription::GetFormDescription(book);
+		a_log.Info(std::format("note probe [seq {}]: text-stage formDesc end", a_obs.seq));
 		const std::string_view formDescView = formDescription ? std::string_view(formDescription->c_str()) : std::string_view{};
 		const TextStats formDescStats = AnalyzeText(formDescView);
 
-		const bool             haveRefRoute = refr != nullptr;
+		// H1 A/B isolation: the reference-parent call introduced by dbd11ac is
+		// disabled for this diagnostic build. The other description calls carry
+		// stage markers so a remaining freeze identifies their exact operation.
+		const bool             haveRefRoute = false;
 		RE::BSString           inheritedRefText;
 		std::string_view       inheritedRefView;
 		TextStats              inheritedRefStats{};
-		if (haveRefRoute) {
-			book->GetDescription(inheritedRefText, refr);
-			inheritedRefView = inheritedRefText.c_str() ? std::string_view(inheritedRefText.c_str()) : std::string_view{};
-			inheritedRefStats = AnalyzeText(inheritedRefView);
-		}
+		a_log.Info(std::format("note probe [seq {}]: text-stage inheritedRef disabled for H1 isolation", a_obs.seq));
 
 		a_log.Info(std::format("note probe [seq {}]: text inherited({}) prefix=\"{}\" | itemCard({}) prefix=\"{}\" | formDesc present={} ({}) prefix=\"{}\" | inheritedRef={} ({}) prefix=\"{}\"",
 			a_obs.seq,
