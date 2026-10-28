@@ -48,10 +48,12 @@
       <div id="empty">No conversation recorded yet.</div>
       <div id="log"></div>
     </div>
-    <!-- v1.3.0 Message History: one full-width pane (design §6.2) — the log
-         is the only scrolling region; no index/filter row/search bar/splitter
-         is rendered or focusable in this mode. -->
+    <!-- v1.3.0 Message History: one full-width pane with a search row above
+         the only scrolling region; no dialogue index/filter/splitter. -->
     <div id="messages">
+      <div id="msgbar">
+        <input id="msgsearch" type="text" placeholder="Search messages..." autocomplete="off">
+      </div>
       <div id="msgempty">No messages recorded yet.</div>
       <div id="msglog"></div>
     </div>

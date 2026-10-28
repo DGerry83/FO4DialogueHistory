@@ -253,7 +253,8 @@ html, body {
  * right-aligned cluster [n of m] [‹] [›] [input]. Height matches the left
  * pane's #search row (8px margin + box); static pane content for the C19
  * drag freeze — no per-frame work. */
-#dialoguebar {
+#dialoguebar,
+#msgbar {
   flex: none;
   display: flex;
   align-items: center;
@@ -292,7 +293,8 @@ html, body {
   color: #D7FFD7;
 }
 
-#bodysearch {
+#bodysearch,
+#msgsearch {
   width: 45%;  /* spec §6.2: ~40-50% of the pane */
   padding: 4px 8px;
   background: rgba(0, 0, 0, 0.3);
@@ -302,7 +304,8 @@ html, body {
   font: inherit;
   font-size: calc(14px * var(--dh-font-scale));
 }
-#bodysearch:focus {
+#bodysearch:focus,
+#msgsearch:focus {
   outline: none;
   border-color: #7BFF7B;
 }
@@ -528,7 +531,8 @@ html, body {
   outline-offset: -2px;
 }
 #search.dh-focus,
-#bodysearch.dh-focus {
+#bodysearch.dh-focus,
+#msgsearch.dh-focus {
   outline: 2px solid #7BFF7B;
   outline-offset: -2px;
   border-color: #7BFF7B;  /* same signal as :focus, model-driven */

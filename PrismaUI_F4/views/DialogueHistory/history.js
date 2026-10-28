@@ -27,7 +27,7 @@
  *                 "<decimal questId,decimal questId,...>") on confirmed
  *                 clear (C5, #003)
  *               window.typingStateChanged("1"/"0") when a text box
- *                 (#search/#bodysearch/#fontnum) gains/loses focus (#005: the plugin
+ *                 (#search/#bodysearch/#msgsearch/#fontnum) gains/loses focus (#005: the plugin
  *                 consumes keyboard ButtonEvents while typing)
  *               window.viewPreferencesChanged(json) once per completed
  *                 preferences commit — slider change, numeric Enter/blur,
@@ -954,10 +954,14 @@ function dhCheckLogWidth() {
  * C19 pane freeze) so every dialogue global stays untouched. Hidden-pane
  * appends are model-only + dirty flags — zero inactive-DOM rendering and
  * no layout reads against display:none content; activation restores the
- * saved scroll and re-windows. */
+ * saved scroll and re-windows. #msgsearch filters only mhViewLines by
+ * case-insensitive substring (never mhMessages), persists across tab switches
+ * and message snapshots, and resets on fresh open; search-active arrivals use
+ * the same projection, with no highlighting or extra navigation. */
 
 /* ---- model ---- */
 const mhMessages = [];           // oldest-first, text only
+let mhSearchTerm = "";           // view-only filter; never changes mhMessages
 let mhMsgsActivated = false;     // fresh open arms the first-activation snap
 let mhDomDirty = true;           // mounted message DOM may lag the model
 let mhSavedScroll = 0;           // per-tab reading position
@@ -1310,8 +1314,15 @@ function mhOnScroll() {
   }
 }
 
+function mhNormalizedSearch() {
+  return mhSearchTerm.trim().toLowerCase();
+}
+
 function mhRebuildView() {
-  mhViewLines = mhMessages.slice();  // independent array — appends push both
+  const term = mhNormalizedSearch();
+  mhViewLines = term === "" ? mhMessages.slice() : mhMessages.filter(function (msg) {
+    return msg.text.toLowerCase().indexOf(term) !== -1;
+  });
   mhBlockHeights = [];
   for (let b = 0; b < Math.ceil(mhViewLines.length / kMsgBlockRows); b++) {
     mhBlockHeights.push(0);
@@ -1319,6 +1330,28 @@ function mhRebuildView() {
   mhBlockSum = 0;
   mhBlockMeasured = 0;
   mhEstSeed = 0;
+}
+
+function mhApplySearchTerm(value) {
+  mhSearchTerm = value;
+  if (!dhPanelMessages()) {
+    mhRebuildView();
+    mhDomDirty = true;
+    mhUpdateEmpty();
+    return;
+  }
+  mhRenderLog();  // a changed filter starts at the newest matching entry
+}
+
+function mhUpdateEmpty() {
+  const empty = document.getElementById("msgempty");
+  if (!empty) {
+    return;
+  }
+  empty.textContent = mhMessages.length > 0 && mhNormalizedSearch() !== ""
+    ? "No matching messages."
+    : "No messages recorded yet.";
+  empty.style.display = mhViewLines.length === 0 ? "" : "none";
 }
 
 function mhSetMsgEmptyVisible(visible) {
@@ -1365,7 +1398,7 @@ function mhRenderLog(anchorScroll) {
     const max = Math.max(0, log.scrollHeight - log.clientHeight);
     log.scrollTop = Math.min(max, Math.max(0, anchorScroll));
   }
-  mhSetMsgEmptyVisible(mhMessages.length === 0);
+  mhUpdateEmpty();
   mhDomDirty = false;
   const t1 = performance.now();
   console.info("[DialogueHistory] msgrender: view " + mhViewLines.length
@@ -1488,6 +1521,21 @@ function appendMessage(msg) {
   }
   mhMessages.push(msg);
   const log = document.getElementById("msglog");
+  if (mhNormalizedSearch() !== "") {
+    const active = dhPanelMessages() && !!log;
+    const atBottom = active && (log.scrollTop + log.clientHeight >= log.scrollHeight - 4);
+    const keepScroll = active ? log.scrollTop : 0;
+    if (!active) {
+      mhRebuildView();
+      mhDomDirty = true;
+      mhUpdateEmpty();
+    } else if (atBottom) {
+      mhRenderLog();
+    } else {
+      mhRenderLog(keepScroll);
+    }
+    return;
+  }
   if (!dhPanelMessages() || !log) {
     mhViewLines.push(msg);  // keep the view current — only the DOM lags
     const prevBlocks = mhBlockHeights.length;
@@ -2180,7 +2228,8 @@ function setHistory(lines) {
   // v1.3.0: a fresh dialogue snapshot IS a fresh panel open — select the
   // Dialogue History tab (no-op in legacy single-pane worlds and when the
   // panel is already there) and arm the message tab's first-activation
-  // snap. The message model and the other tab's state are untouched.
+  // snap. Message contents and scroll survive; message search resets like the
+  // dialogue searches so every fresh open starts unfiltered.
   if (dhPanelMessages()) {
     dhSavePaneScroll();
     dhSetPanelMessages(false);
@@ -2192,6 +2241,11 @@ function setHistory(lines) {
     dhFocusPos.tabs = 0;
   }
   mhMsgsActivated = false;
+  const msgSearch = document.getElementById("msgsearch");
+  if (msgSearch) {
+    msgSearch.value = "";
+  }
+  mhApplySearchTerm("");
   // Full snapshot replay (sent on panel open): reset to the defaults —
   // "All" selected (selection set cleared), search cleared — then apply the
   // persisted filter state (#001; all-checked default when the plugin never
@@ -2878,9 +2932,9 @@ function dhOnControllerAction(event) {
  * a separate zone entered by ArrowUp from clear and exited back to clear,
  * so the six-zone cycle and its wrap stay byte-for-byte. */
 const dhFocusZoneOrder = ["search", "filters", "quests", "bodysearch", "log", "clear"];
-/* v1.3.0: Message History's content zones (design §6.1 "message log ->
- * Clear") — used only while the messages tab is active. */
-const dhFocusMsgZoneOrder = ["log", "clear"];
+/* Message History content zones: search -> log -> Clear. Dialogue's six-zone
+ * order remains unchanged. */
+const dhFocusMsgZoneOrder = ["msgsearch", "log", "clear"];
 
 /* Per-zone position: filters = checkbox index (dhBuckets order), quests =
  * visible row index; roving — a zone remembers its position across
@@ -2942,6 +2996,9 @@ function dhFocusTarget() {
   if (dhFocusZone === "bodysearch") {
     return document.getElementById("bodysearch");
   }
+  if (dhFocusZone === "msgsearch") {
+    return document.getElementById("msgsearch");
+  }
   if (dhFocusZone === "prefs") {
     return dhPrefsTarget();  // 2026-10-24 header cluster (ruling V1)
   }
@@ -2966,9 +3023,9 @@ function dhFocusTarget() {
 /* Move the visible indicator to whatever dhFocusTarget resolves: strip
  * the class from the previous marks (detached rows are harmless no-ops)
  * and add it to the new target. Real DOM focus only accompanies the text
- * zones (#search, #bodysearch, #fontnum — so typing works); leaving one
- * blurs, so typed text can't land in a box while another zone owns the
- * model. */
+ * zones (#search, #bodysearch, #msgsearch, #fontnum — so typing works);
+ * leaving one blurs, so typed text can't land in a box while another zone
+ * owns the model. */
 function dhFocusApply() {
   for (const el of dhFocusMarked) {
     el.classList.remove("dh-focus");
@@ -2981,12 +3038,12 @@ function dhFocusApply() {
   }
   const active = document.activeElement;
   const textBox = active && (active.id === "search" || active.id === "bodysearch"
-    || active.id === "fontnum");
+    || active.id === "msgsearch" || active.id === "fontnum");
   if (textBox && (!el || el !== active)) {
     active.blur();
   }
-  if (el && (el.id === "search" || el.id === "bodysearch" || el.id === "fontnum")
-      && dhFocusOverlay < 0 && typeof el.focus === "function") {
+  if (el && (el.id === "search" || el.id === "bodysearch" || el.id === "msgsearch"
+      || el.id === "fontnum") && dhFocusOverlay < 0 && typeof el.focus === "function") {
     el.focus();
   }
 }
@@ -3177,11 +3234,10 @@ function dhFocusMove(dir) {
     return true;
   }
   if (dhFocusZone === "log") {
-    // D4: always scroll, never cycle — EXCEPT v1.3.0 design §6.1 on the
-    // Message History tab: Up from the tab's first (only) content zone
-    // returns to the tab strip. Dialogue behavior is byte-identical.
+    // Dialogue always scrolls. On Message History, Up returns to the search
+    // box above the log instead of cycling or scrolling past the first row.
     if (dir < 0 && dhPanelMessages() && dhHasTabs()) {
-      dhFocusSetZone("tabs");
+      dhFocusSetZone("msgsearch");
       return true;
     }
     dhLogScrollLines(dir < 0 ? -1 : 1);  // D4: always scroll, never cycle
@@ -3227,8 +3283,8 @@ function dhFocusActivate() {
     }
     return false;
   }
-  if (dhFocusZone === "bodysearch") {
-    return true;  // Enter/Space are owned by the input's own handlers (I7)
+  if (dhFocusZone === "bodysearch" || dhFocusZone === "msgsearch") {
+    return true;  // text input owns Enter/Space; filtering needs no activation
   }
   if (dhFocusZone === "prefs") {
     if (dhFocusPos.prefs === 2) {
@@ -3279,7 +3335,7 @@ function dhFocusOnKey(event) {
   }
   if (space && event.target
       && (event.target.id === "search" || event.target.id === "bodysearch"
-        || event.target.id === "fontnum")) {
+        || event.target.id === "msgsearch" || event.target.id === "fontnum")) {
     return false;  // a typed character while a text box owns the real focus
   }
   if (dhFocusOverlay >= 0) {
@@ -3308,15 +3364,14 @@ function dhFocusOnKey(event) {
       dhPrefsHorizontal(right ? 1 : -1, event);  // ruling V4 — never zone-cycles
       return true;
     }
-    if (dhFocusZone === "search" || dhFocusZone === "bodysearch") {
+    if (dhFocusZone === "search" || dhFocusZone === "bodysearch" || dhFocusZone === "msgsearch") {
       const box = document.getElementById(dhFocusZone);
       if (box && !box.value) {
-        // #007: empty box — nothing to caret over, so Left/Right leave the
-        // zone; a non-empty box keeps them as caret keys (typing UX)
+        // Empty box: Left/Right leave the zone; a nonempty box keeps caret keys.
         event.preventDefault();
         dhFocusCycleZone(right ? 1 : -1);
       }
-      return true;  // D3: caret keys — no preventDefault, default caret move
+      return true;  // caret keys — no preventDefault, default caret move
     }
     event.preventDefault();
     if (dhFocusZone === "filters") {
@@ -3330,10 +3385,8 @@ function dhFocusOnKey(event) {
     event.preventDefault();
     const dir = up ? -1 : 1;
     if (dhFocusZone === "tabs") {
-      // v1.3.0 design §6.1: Down enters the active tab's first content zone;
-      // Up returns to the header preferences cluster (the visual ladder
-      // above the strip). Both are new transitions — no frozen path moves.
-      dhFocusSetZone(dir > 0 ? (dhPanelMessages() ? "log" : "search") : "prefs");
+      // Down enters the active tab's first content zone; Up enters preferences.
+      dhFocusSetZone(dir > 0 ? (dhPanelMessages() ? "msgsearch" : "search") : "prefs");
       return true;
     }
     if (dhFocusZone === "prefs") {
@@ -3349,6 +3402,10 @@ function dhFocusOnKey(event) {
     }
     if (dhFocusZone === "bodysearch") {
       dhFocusSetZone("log");  // spec §6.1: Up/Down leave the box for the log
+      return true;
+    }
+    if (dhFocusZone === "msgsearch") {
+      dhFocusSetZone(dir > 0 ? "log" : "tabs");
       return true;
     }
     if (up && dhFocusZone === "clear") {
@@ -3424,6 +3481,11 @@ function dhFocusSyncFromClick(event) {
     }
     if (id === "bodysearch") {
       dhFocusZone = "bodysearch";
+      dhFocusApply();
+      return;
+    }
+    if (id === "msgsearch") {
+      dhFocusZone = "msgsearch";
       dhFocusApply();
       return;
     }
@@ -3569,6 +3631,11 @@ document.addEventListener("DOMContentLoaded", () => {
     dhBodySearchWireInput(bodySearch);
     dhWireTypingEmit(bodySearch);  // #005: report focus/blur to the plugin
   }
+  const msgSearch = document.getElementById("msgsearch");
+  if (msgSearch) {
+    msgSearch.addEventListener("input", function () { mhApplySearchTerm(msgSearch.value); });
+    dhWireTypingEmit(msgSearch);
+  }
   const bodySearchPrev = document.getElementById("bodysearchprev");
   if (bodySearchPrev) {
     bodySearchPrev.addEventListener("click", dhBodySearchPrev);  // ‹ = older
@@ -3709,6 +3776,11 @@ document.addEventListener("DOMContentLoaded", () => {
         dhBodySearchClear();  // clears term + box + count; LB/RB revert
         return;
       }
+      if (target && target.id === "msgsearch" && target.value) {
+        target.value = "";
+        mhApplySearchTerm("");
+        return;
+      }
       if (target && target.id === "search" && target.value) {
         target.value = "";  // symmetric clear for the quest-name box
         dhRenderIndex();
@@ -3720,7 +3792,7 @@ document.addEventListener("DOMContentLoaded", () => {
         dhFocusSetZone("clear");  // leave prefs back to the entry zone
         return;
       }
-      if (target && (target.id === "search" || target.id === "bodysearch")) {
+      if (target && (target.id === "search" || target.id === "bodysearch" || target.id === "msgsearch")) {
         dhFocusSetZone(target.id === "search" ? "filters" : "log");  // blurs the box
         return;
       }
