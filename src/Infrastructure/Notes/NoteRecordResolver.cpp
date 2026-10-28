@@ -233,14 +233,16 @@ namespace
 		}
 	}
 
-	// Confirms once that the deferred task really runs on a stable thread;
-	// compared against the Install-time thread id in the log.
+	// Confirms once that the deferred path executed; the per-line [Thread:]
+	// stamps are the authoritative record of WHICH thread ran each deferred
+	// observation — install ran on the kGameDataReady messaging thread, which
+	// is a different context and not the comparison target.
 	void LogFirstTaskThreadOnce(F4DH::Core::ILogger& a_log)
 	{
 		static bool logged = false;
 		if (!logged) {
 			logged = true;
-			a_log.Info(std::format("note probe: first deferred observation running on thread {} (compare with the install-time thread id)",
+			a_log.Info(std::format("note probe: first deferred observation executing on thread {} (per-line [Thread:] stamps record the deferred thread; do not compare with the install-time thread)",
 				::GetCurrentThreadId()));
 		}
 	}
@@ -260,21 +262,90 @@ namespace F4DH::Infrastructure::Notes
 			a_obs.uniqueID,
 			a_obs.fromThreadId));
 
-		const RE::TESForm* form = RE::TESForm::FindFormByID(a_obs.baseFormID);
-		if (!form) {
-			a_log.Warn(std::format("note probe [seq {}]: base form 0x{:08X} did not resolve", a_obs.seq, a_obs.baseFormID));
+		// --- Identity resolution (OG runtime-evidence fix, RUNTIME_RESULTS.md
+		// seq931-942): the event baseFormID is unreliable — inventory reads
+		// carried the player's own ID (0x14, type 65) and dynamic/world reads
+		// carried 0. Both candidates are resolved and type-checked here; the
+		// reference base names the actually-displayed instance and is
+		// preferred, with the event base as fallback. Identities are never
+		// merged silently: every outcome is logged explicitly.
+		const RE::TESForm* eventBaseForm = nullptr;
+		if (a_obs.baseFormID != 0) {
+			eventBaseForm = RE::TESForm::FindFormByID(a_obs.baseFormID);
+		}
+		const auto* eventBook = (eventBaseForm && eventBaseForm->Is(RE::FormType::kBook)) ?
+			static_cast<const RE::TESObjectBOOK*>(eventBaseForm) :
+			nullptr;
+
+		// 0xFF00xxxx references are runtime-created; the ordinary map lookup
+		// can miss them, so fall back to the numeric form map (the
+		// QuestResolver-proven path for runtime IDs, OG-verified globals).
+		const RE::TESObjectREFR* refr = nullptr;
+		const RE::TESForm*         refBaseForm = nullptr;
+		const char*                refResolve = "none";
+		if (a_obs.bookRefFormID != 0) {
+			refResolve = "unresolved";
+			const RE::TESForm* refForm = RE::TESForm::FindFormByID(a_obs.bookRefFormID);
+			if (refForm) {
+				refResolve = "map";
+			} else if ((a_obs.bookRefFormID & 0xFF000000u) == 0xFF000000u) {
+				refForm = RE::TESForm::FindFormByNumericID(a_obs.bookRefFormID);
+				refResolve = refForm ? "numeric" : "unresolved";
+			}
+			refr = refForm ? refForm->As<RE::TESObjectREFR>() : nullptr;
+			if (refForm && !refr) {
+				refResolve = "notaref";
+			}
+			if (refr) {
+				refBaseForm = refr->GetBaseObject();
+			}
+		}
+		const auto* refBook = (refBaseForm && refBaseForm->Is(RE::FormType::kBook)) ?
+			static_cast<const RE::TESObjectBOOK*>(refBaseForm) :
+			nullptr;
+
+		const RE::TESObjectBOOK* book = refBook ? refBook : eventBook;
+		const char*              source = refBook ? "ref" : (eventBook ? "event" : "none");
+		const bool               mismatch = eventBook && refBook && eventBook != refBook;
+
+		const auto describe = [](std::uint32_t a_id, const RE::TESForm* a_form, const RE::TESObjectBOOK* a_book) {
+			if (a_id == 0) {
+				return std::string("none");
+			}
+			if (!a_form) {
+				return std::format("0x{:08X} unresolved", a_id);
+			}
+			if (!a_book) {
+				return std::format("0x{:08X} notabook:{}", a_id, static_cast<std::uint32_t>(a_form->GetFormType()));
+			}
+			return std::format("0x{:08X} book", a_id);
+		};
+		a_log.Info(std::format("note probe [seq {}]: identity eventBase={} refBase={} selected=0x{:08X} source={} mismatch={} refResolve={}",
+			a_obs.seq,
+			describe(a_obs.baseFormID, eventBaseForm, eventBook),
+			describe(refBaseForm ? refBaseForm->formID : 0u, refBaseForm, refBook),
+			book ? book->formID : 0u,
+			source,
+			mismatch ? 1 : 0,
+			refResolve));
+
+		if (!book) {
+			a_log.Warn(std::format("note probe [seq {}]: neither event base nor reference base resolved to a book — no body probes for this read",
+				a_obs.seq));
 			return;
 		}
-		if (!form->Is(RE::FormType::kBook)) {
-			a_log.Warn(std::format("note probe [seq {}]: base form 0x{:08X} is type {} — not a book; read event payload unexpected",
-				a_obs.seq, a_obs.baseFormID, static_cast<std::uint32_t>(form->GetFormType())));
-			return;
+		if (mismatch) {
+			// Both resolved to books but disagree: log the non-selected
+			// identity too so the divergence is preserved in evidence.
+			a_log.Info(std::format("note probe [seq {}]: base (unselected eventBase): {}", a_obs.seq, DescribeBookIdentity(*eventBook)));
 		}
-		const auto* book = static_cast<const RE::TESObjectBOOK*>(form);
 		a_log.Info(std::format("note probe [seq {}]: base: {}", a_obs.seq, DescribeBookIdentity(*book)));
 
 		// D8: probe both description routes plus the static one; the checklist
-		// compares these candidates against the visible page.
+		// compares these candidates against the visible page. Runtime evidence
+		// (seq931-942) adds a fourth candidate when the reference exists:
+		// inherited description with the REFERENCE as parent — the route most
+		// likely to carry stored/alias-resolved instance text.
 		RE::BSString inheritedText;
 		book->GetDescription(inheritedText, nullptr);
 		const std::string_view inheritedView = inheritedText.c_str() ? std::string_view(inheritedText.c_str()) : std::string_view{};
@@ -289,12 +360,24 @@ namespace F4DH::Infrastructure::Notes
 		const std::string_view formDescView = formDescription ? std::string_view(formDescription->c_str()) : std::string_view{};
 		const TextStats formDescStats = AnalyzeText(formDescView);
 
-		a_log.Info(std::format("note probe [seq {}]: text inherited({}) prefix=\"{}\" | itemCard({}) prefix=\"{}\" | formDesc present={} ({}) prefix=\"{}\"",
+		const bool             haveRefRoute = refr != nullptr;
+		RE::BSString           inheritedRefText;
+		std::string_view       inheritedRefView;
+		TextStats              inheritedRefStats{};
+		if (haveRefRoute) {
+			book->GetDescription(inheritedRefText, refr);
+			inheritedRefView = inheritedRefText.c_str() ? std::string_view(inheritedRefText.c_str()) : std::string_view{};
+			inheritedRefStats = AnalyzeText(inheritedRefView);
+		}
+
+		a_log.Info(std::format("note probe [seq {}]: text inherited({}) prefix=\"{}\" | itemCard({}) prefix=\"{}\" | formDesc present={} ({}) prefix=\"{}\" | inheritedRef={} ({}) prefix=\"{}\"",
 			a_obs.seq,
 			FormatStats(inheritedStats), SanitizePrefix(inheritedView),
 			FormatStats(itemCardStats), SanitizePrefix(itemCardView),
 			formDescription ? 1 : 0,
-			FormatStats(formDescStats), SanitizePrefix(formDescView)));
+			FormatStats(formDescStats), SanitizePrefix(formDescView),
+			haveRefRoute ? 1 : 0,
+			FormatStats(inheritedRefStats), SanitizePrefix(inheritedRefView)));
 
 		// R1: full candidate bodies — the exact visible-page comparison input
 		// for G2. One self-contained escaped line per route; empty vs missing
@@ -309,24 +392,29 @@ namespace F4DH::Infrastructure::Notes
 		} else {
 			a_log.Info(std::format("note probe [seq {}]: body formDesc absent", a_obs.seq));
 		}
+		if (haveRefRoute) {
+			a_log.Info(std::format("note probe [seq {}]: body inheritedRef len={} \"{}\"",
+				a_obs.seq, inheritedRefView.size(), EscapeForLog(inheritedRefView)));
+		} else {
+			a_log.Info(std::format("note probe [seq {}]: body inheritedRef skipped (no bookRef)", a_obs.seq));
+		}
 
 		const auto [location, locationVia] = FormatPlayerLocation(a_log);
 		a_log.Info(std::format("note probe [seq {}]: context gameTime={} location='{}' via={}",
 			a_obs.seq, FormatGameTime(), location, locationVia));
 
-		if (a_obs.bookRefFormID != 0) {
-			const RE::TESForm* refForm = RE::TESForm::FindFormByID(a_obs.bookRefFormID);
-			if (!refForm) {
-				a_log.Warn(std::format("note probe [seq {}]: bookRef 0x{:08X} did not resolve", a_obs.seq, a_obs.bookRefFormID));
-				return;
-			}
-			const auto* refr = refForm->As<RE::TESObjectREFR>();
-			const auto* base = refr ? refr->GetBaseObject() : nullptr;
-			a_log.Info(std::format("note probe [seq {}]: bookRef editorID='{}' base=0x{:08X} baseMatchesEvent={}",
+		if (refr) {
+			const auto* base = refr->GetBaseObject();
+			const auto  refDisplay = RE::TESFullName::GetFormFullOrDisplayName(refr);
+			a_log.Info(std::format("note probe [seq {}]: bookRef editorID='{}' displayName='{}' base=0x{:08X} baseMatchesEvent={}",
 				a_obs.seq,
-				Safe(refForm->GetFormEditorID()),
+				Safe(refr->GetFormEditorID()),
+				refDisplay ? Safe(refDisplay->data()) : std::string("<none>"),
 				base ? base->formID : 0u,
 				base && base->formID == a_obs.baseFormID ? 1 : 0));
+		} else if (a_obs.bookRefFormID != 0) {
+			a_log.Info(std::format("note probe [seq {}]: bookRef 0x{:08X} did not resolve to a reference (refResolve={})",
+				a_obs.seq, a_obs.bookRefFormID, refResolve));
 		}
 	}
 
