@@ -27,12 +27,25 @@
  *                 "<decimal questId,decimal questId,...>") on confirmed
  *                 clear (C5, #003)
  *               window.typingStateChanged("1"/"0") when a text box
- *                 (#search/#bodysearch/#fontnum) gains/loses focus (#005: the plugin
+ *                 (#search/#bodysearch/#msgsearch/#fontnum) gains/loses focus (#005: the plugin
  *                 consumes keyboard ButtonEvents while typing)
  *               window.viewPreferencesChanged(json) once per completed
  *                 preferences commit — slider change, numeric Enter/blur,
  *                 pause checkbox toggle — {"fontSize":int,"pauseOnOpen":
  *                 bool} (2026-10-24 header controls)
+ * Message History (v1.3.0): window.setMessageHistory(json) full oldest-first
+ *                 snapshot of {text:string}; window.appendMessage(json) one
+ *                 {text:string} — separate channels from dialogue, either
+ *                 arrival order tolerated; the confirmed message clear
+ *                 dispatches window.clearMessagesRequested(""). Two tabs
+ *                 (#tabdialogue / #tabmessage) share one panel via a #panel
+ *                 mode class (dh-msgs); a fresh setHistory selects Dialogue
+ *                 History and arms the message tab's first-activation snap;
+ *                 the tab strip is a focus zone OUTSIDE the legacy six-zone
+ *                 cycle (design §6.1); hidden-pane appends are model-only +
+ *                 dirty flags; the message log virtualizes on parallel
+ *                 mh-prefixed C17–C19 state (see the Message History
+ *                 section below).
  * Keyboard surface (C6): one document-level keydown handler — Esc clears
  * a focused non-empty search box first, leaves a focused empty box
  * (#007: search -> filters, bodysearch -> log), else closes (overlay up:
@@ -338,6 +351,17 @@ const dhHintText = {
   keyboard: "Esc close · ↑↓ navigate · Enter select",
   controller: "B close · A select · X clear quest · Y clear all · LB/RB page"
 };
+/* v1.3.0: with the real tabbed markup the wording ALSO describes the
+ * focused-strip tab navigation (design §6.1) while keeping every existing
+ * hint; legacy worlds without the #tabstrip keep the exact pre-feature
+ * strings above (frozen c8 expectations). */
+const dhHintTextTabs = {
+  keyboard: "Esc close · ↑↓ navigate · Enter select · ←→ switch tab",
+  controller: "B close · A select · X clear quest · Y clear all · LB/RB page · ←→ switch tab"
+};
+function dhHintStrings() {
+  return dhHasTabs() ? dhHintTextTabs : dhHintText;
+}
 let dhHintMode = "keyboard";  // "keyboard" | "controller"
 
 /* Swap #hint to the given mode's wording. Unknown modes are ignored; the
@@ -350,7 +374,7 @@ function dhApplyHintMode(mode) {
   dhHintMode = mode;
   const hint = document.getElementById("hint");
   if (hint) {
-    hint.textContent = dhHintText[mode];
+    hint.textContent = dhHintStrings()[mode];
   }
 }
 
@@ -750,6 +774,9 @@ function dhUpdateWindow() {
   if (dhScrollSilencing) {
     return;
   }
+  if (dhPanelMessages()) {
+    return;  // v1.3.0: dialogue pane hidden — no inactive-pane window work
+  }
   const log = document.getElementById("log");
   if (!log) {
     return;
@@ -835,8 +862,24 @@ function dhOnScroll() {
  * per-mousemove invalidation forced a ~6-10-reflow layout cascade every
  * frame and made panel resize lag at any model size. */
 function dhInvalidateHeights() {
+  if (dhBlockHeights.length === 0) {
+    return;
+  }
+  if (dhPanelMessages()) {
+    // v1.3.0: the dialogue pane is hidden (Message History active) — no
+    // layout reads/writes against display:none content (they would record
+    // 0-height measurements into the running average). Stale-mark only;
+    // the saved average seeds the re-estimates when the pane returns.
+    dhEstSeed = dhBlockLayout().est;
+    for (let b = 0; b < dhBlockHeights.length; b++) {
+      dhBlockHeights[b] = 0;
+    }
+    dhBlockSum = 0;
+    dhBlockMeasured = 0;
+    return;
+  }
   const log = document.getElementById("log");
-  if (!log || dhBlockHeights.length === 0) {
+  if (!log) {
     return;
   }
   const before = dhBlockLayout();
@@ -872,6 +915,10 @@ function dhCheckLogWidth() {
   if (!log) {
     return;
   }
+  if (dhPanelMessages()) {
+    dhLogWidth = -1;  // v1.3.0: hidden pane — reseed when dialogue returns
+    return;
+  }
   const w = log.clientWidth;
   if (dhLogWidth === -1) {
     dhLogWidth = w;
@@ -880,6 +927,663 @@ function dhCheckLogWidth() {
   if (w !== dhLogWidth) {
     dhLogWidth = w;
     dhInvalidateHeights();
+  }
+}
+
+/* ======== Message History (v1.3.0) =========================================
+ * Frozen JS contracts (ARCHITECTURE_CONTRACT): the native side calls
+ * window.setMessageHistory(json) — an oldest-first array of {text:string},
+ * pushed on every fresh open AFTER the dialogue snapshot (the view
+ * tolerates EITHER ARRIVAL ORDER) — and window.appendMessage(json) with one
+ * {text:string}; the confirmed message clear dispatches
+ * window.clearMessagesRequested(""). Message state is a fully independent
+ * channel: message snapshots/appends never touch dialogue state, tab
+ * selection, scroll, or focus, and dialogue snapshots/appends never touch
+ * messages. A fresh setHistory IS a fresh panel open: it selects the
+ * Dialogue History tab and arms the message tab's first-activation snap
+ * (design §6.4); later tab switches preserve each tab's reading position.
+ * Two tabs, one panel: #tabstrip is a focus zone OUTSIDE the legacy six-
+ * zone cycle (the 2026-10-24 prefs-cluster precedent) and switches a #panel
+ * mode class (dh-msgs) that display:nones the inactive body pane — hidden
+ * controls are unreachable by mouse hits AND by the focus model (per-tab
+ * zone order + active-log resolution; legacy worlds without the tabstrip
+ * default byte-identically to the pre-feature dialogue surface).
+ * The message log reuses the C17–C19 proven algorithms on parallel
+ * mh-prefixed state (fixed-count blocks, spacer-simulated scroll height,
+ * running-average estimates, silent scrollTop corrections, drag gating,
+ * C19 pane freeze) so every dialogue global stays untouched. Hidden-pane
+ * appends are model-only + dirty flags — zero inactive-DOM rendering and
+ * no layout reads against display:none content; activation restores the
+ * saved scroll and re-windows. #msgsearch filters only mhViewLines by
+ * case-insensitive substring (never mhMessages), persists across tab switches
+ * and message snapshots, and resets on fresh open; search-active arrivals use
+ * the same projection, with no highlighting or extra navigation. */
+
+/* ---- model ---- */
+const mhMessages = [];           // oldest-first, text only
+let mhSearchTerm = "";           // view-only filter; never changes mhMessages
+let mhMsgsActivated = false;     // fresh open arms the first-activation snap
+let mhDomDirty = true;           // mounted message DOM may lag the model
+let mhSavedScroll = 0;           // per-tab reading position
+let dhDialogueScroll = 0;        // dialogue pane's saved scroll (tab switches)
+let dhDomDirty = false;          // mounted dialogue DOM may lag the model
+
+/* ---- block-windowed message log (C17–C19 algorithms on mh state) ---- */
+const kMsgBlockRows = 50;
+const kMsgOverscanBlocks = 1;
+const kMsgInitialRowEst = 23;    // px/row guess: 16px font x 1.4 line-height (+pad)
+
+let mhViewLines = [];
+let mhBlockHeights = [];
+let mhBlockSum = 0;
+let mhBlockMeasured = 0;
+let mhEstSeed = 0;
+const mhMounted = new Map();
+let mhTopSpacer = null;
+let mhBottomSpacer = null;
+let mhLogWidth = -1;
+let mhScrollSilencing = false;
+
+/* Normalize one raw message payload ({text:string}); tolerant parse, null
+ * for non-objects (mirrors dhNormalizeLine discipline). */
+function mhNormalizeMessage(raw) {
+  raw = dhParse(raw, null);
+  if (!raw || typeof raw !== "object") {
+    return null;
+  }
+  return { text: typeof raw.text === "string" ? raw.text : "" };
+}
+
+/* ---- panel mode + tab switching ---- */
+function dhPanelMessages() {
+  const panel = document.getElementById("panel");
+  return !!(panel && panel.classList && panel.classList.contains("dh-msgs"));
+}
+
+function dhSetPanelMessages(on) {
+  const panel = document.getElementById("panel");
+  if (panel && panel.classList) {
+    if (on) {
+      panel.classList.add("dh-msgs");
+    } else {
+      panel.classList.remove("dh-msgs");
+    }
+  }
+}
+
+/* Both tab buttons, or null in legacy worlds without the tabstrip. */
+function dhTabElements() {
+  const d = document.getElementById("tabdialogue");
+  const m = document.getElementById("tabmessage");
+  return d && m ? [d, m] : null;
+}
+
+function dhHasTabs() {
+  return !!dhTabElements();
+}
+
+function dhActiveTabIndex() {
+  return dhPanelMessages() ? 1 : 0;
+}
+
+/* Dialogue pane visibility — false only when the messages tab owns the
+ * panel (legacy worlds are always dialogue-visible). */
+function dhDialogueVisible() {
+  return !dhPanelMessages();
+}
+
+function dhSavePaneScroll() {
+  if (dhPanelMessages()) {
+    const log = document.getElementById("msglog");
+    if (log) {
+      mhSavedScroll = log.scrollTop;
+    }
+  } else {
+    const log = document.getElementById("log");
+    if (log) {
+      dhDialogueScroll = log.scrollTop;
+    }
+  }
+}
+
+/* Activate a tab (0 = Dialogue History, 1 = Message History). User-driven
+ * entry point (mouse click, focused-strip Left/Right, Enter): saves the
+ * outgoing pane's reading position, flips the mode class + tab indicators,
+ * then either first-activation-snaps the message log (§6.4) or restores the
+ * saved scroll. No-op in legacy worlds; focus lands on the strip, never
+ * yanked into content — a typing text box always blurs + reports. */
+function dhActivateTab(idx) {
+  const tabs = dhTabElements();
+  if (!tabs) {
+    return;
+  }
+  idx = idx === 1 ? 1 : 0;
+  const toMessages = idx === 1;
+  if (toMessages === dhPanelMessages()) {
+    dhFocusPos.tabs = idx;
+    dhFocusApply();  // keep/place the indicator; the zone stays put
+    return;
+  }
+  dhSavePaneScroll();
+  dhSetPanelMessages(toMessages);
+  if (toMessages) {
+    tabs[0].classList.remove("active");
+    tabs[1].classList.add("active");
+    mhLogWidth = -1;  // reseed against the true width below
+    if (!mhMsgsActivated) {
+      mhMsgsActivated = true;
+      mhRenderLog();  // §6.4: newest before paint on first activation
+    } else {
+      mhRestorePane(mhSavedScroll);
+    }
+  } else {
+    tabs[0].classList.add("active");
+    tabs[1].classList.remove("active");
+    dhLogWidth = -1;
+    dhRestoreDialoguePane(dhDialogueScroll);
+  }
+  dhFocusZone = "tabs";
+  dhFocusPos.tabs = idx;
+  dhFocusApply();
+}
+
+/* Message-pane restore: a hidden snapshot REPLACE can change every block,
+ * and hidden appends grow the tail — so a dirty pane drops its whole
+ * mounted set and re-windows fresh rows from the model at the saved
+ * scroll (the block heights above are estimates after a replace, exact
+ * after append-only dirt). */
+function mhRestorePane(targetScroll) {
+  const log = document.getElementById("msglog");
+  if (!log) {
+    return;
+  }
+  if (mhDomDirty) {
+    for (const el of mhMounted.values()) {
+      el.remove();
+    }
+    mhMounted.clear();
+    mhDomDirty = false;
+  }
+  log.scrollTop = targetScroll;
+  mhUpdateWindow();
+  mhCheckLogWidth();
+}
+
+/* Dialogue-pane restore (returning FROM the messages tab): the index
+ * rebuild was skipped while hidden; re-render it, drop the stale mounted
+ * tail, restore the saved scroll. */
+function dhRestoreDialoguePane(targetScroll) {
+  const log = document.getElementById("log");
+  if (!log) {
+    return;
+  }
+  if (dhDomDirty) {
+    dhRenderIndex();
+    const last = dhBlockHeights.length - 1;
+    const el = last >= 0 ? dhMounted.get(last) : null;
+    if (el) {
+      el.remove();
+      dhMounted.delete(last);
+    }
+    dhDomDirty = false;
+  }
+  log.scrollTop = targetScroll;
+  dhUpdateWindow();
+  dhCheckLogWidth();
+}
+
+/* ---- mh block layout (mirrors dhBlockLayout) ---- */
+function mhBlockLayout() {
+  const n = mhBlockHeights.length;
+  let est = kMsgBlockRows * kMsgInitialRowEst;
+  if (mhBlockMeasured > 0) {
+    est = mhBlockSum / mhBlockMeasured;
+  } else if (mhEstSeed > 0) {
+    est = mhEstSeed;
+  }
+  const heights = new Array(n);
+  for (let b = 0; b < n; b++) {
+    heights[b] = mhBlockHeights[b] || est;
+  }
+  const offsets = new Array(n + 1);
+  offsets[0] = 0;
+  for (let b = 0; b < n; b++) {
+    offsets[b + 1] = offsets[b] + heights[b];
+  }
+  return { est: est, heights: heights, offsets: offsets, total: offsets[n] };
+}
+
+function mhEnsureSpacers() {
+  if (!mhTopSpacer) {
+    mhTopSpacer = document.createElement("div");
+    mhBottomSpacer = document.createElement("div");
+  }
+}
+
+function mhMakeRow(msg) {
+  const row = document.createElement("div");
+  row.className = "mline";
+  row.textContent = msg.text;  // text only — never HTML (§5.4)
+  return row;
+}
+
+function mhMountBlock(log, b) {
+  const block = document.createElement("div");
+  block.className = "vblock";
+  const start = b * kMsgBlockRows;
+  const end = Math.min(start + kMsgBlockRows, mhViewLines.length);
+  const fragment = document.createDocumentFragment();
+  for (let i = start; i < end; i++) {
+    fragment.append(mhMakeRow(mhViewLines[i]));
+  }
+  block.append(fragment);
+  log.append(block);
+  mhMounted.set(b, block);
+}
+
+function mhSetSpacerHeights(top, bottom) {
+  if (!mhTopSpacer) {
+    return;
+  }
+  const t = top + "px";
+  const b = bottom + "px";
+  if (mhTopSpacer.style.height !== t) {
+    mhTopSpacer.style.height = t;
+  }
+  if (mhBottomSpacer.style.height !== b) {
+    mhBottomSpacer.style.height = b;
+  }
+}
+
+function mhRefreshSpacers() {
+  if (mhMounted.size === 0 || mhBlockHeights.length === 0) {
+    mhSetSpacerHeights(0, 0);
+    return;
+  }
+  let first = mhBlockHeights.length;
+  let last = -1;
+  for (const b of mhMounted.keys()) {
+    if (b < first) {
+      first = b;
+    }
+    if (b > last) {
+      last = b;
+    }
+  }
+  const layout = mhBlockLayout();
+  mhSetSpacerHeights(layout.offsets[first],
+    layout.total - layout.offsets[last] - layout.heights[last]);
+}
+
+function mhMeasureMountedBlocks(first, last, entryScrollTop, layout) {
+  let delta = 0;
+  for (let b = first; b <= last; b++) {
+    if (mhBlockHeights[b] !== 0) {
+      continue;
+    }
+    const el = mhMounted.get(b);
+    if (!el) {
+      continue;
+    }
+    const h = el.offsetHeight;
+    mhBlockHeights[b] = h;
+    if (mhViewLines.length >= (b + 1) * kMsgBlockRows) {
+      // Full blocks only — a partial tail never joins the average.
+      mhBlockSum += h;
+      mhBlockMeasured += 1;
+    }
+    if (layout.offsets[b] + layout.heights[b] <= entryScrollTop) {
+      delta += h - layout.heights[b];
+    }
+  }
+  return delta;
+}
+
+function mhSetScrollSilently(log, value) {
+  mhScrollSilencing = true;
+  log.scrollTop = value;
+  mhScrollSilencing = false;
+}
+
+function mhUpdateWindow() {
+  if (mhScrollSilencing) {
+    return;
+  }
+  const log = document.getElementById("msglog");
+  if (!log || !dhPanelMessages()) {
+    return;  // window only the visible pane (legacy worlds: no pane, no work)
+  }
+  const n = mhBlockHeights.length;
+  if (n === 0) {
+    for (const el of mhMounted.values()) {
+      el.remove();
+    }
+    mhMounted.clear();
+    mhSetSpacerHeights(0, 0);
+    return;
+  }
+  const layout = mhBlockLayout();
+  const entryScroll = log.scrollTop;
+  const overscanPx = kMsgOverscanBlocks * layout.est;
+  const winTop = entryScroll - overscanPx;
+  const winBottom = entryScroll + log.clientHeight + overscanPx;
+  let first = 0;
+  while (first < n - 1 && layout.offsets[first] + layout.heights[first] <= winTop) {
+    first++;
+  }
+  let last = first;
+  while (last < n - 1 && layout.offsets[last + 1] < winBottom) {
+    last++;
+  }
+  let dirty = false;
+  for (let b = first; b <= last; b++) {
+    if (!mhMounted.has(b)) {
+      mhMountBlock(log, b);
+      dirty = true;
+    }
+  }
+  const strays = [];
+  for (const pair of mhMounted) {
+    if (pair[0] < first || pair[0] > last) {
+      strays.push(pair[0]);
+    }
+  }
+  for (const b of strays) {
+    mhMounted.get(b).remove();
+    mhMounted.delete(b);
+    dirty = true;
+  }
+  if (dirty) {
+    for (let b = first; b <= last; b++) {
+      log.append(mhMounted.get(b));
+    }
+    log.append(mhBottomSpacer);
+  }
+  const delta = mhMeasureMountedBlocks(first, last, entryScroll, layout);
+  const now = mhBlockLayout();
+  mhSetSpacerHeights(now.offsets[first],
+    now.total - now.offsets[last] - now.heights[last]);
+  if (delta !== 0) {
+    mhSetScrollSilently(log, entryScroll + delta);
+  }
+}
+
+function mhOnScroll() {
+  if (!dhDragActive) {
+    mhUpdateWindow();
+  }
+}
+
+function mhNormalizedSearch() {
+  return mhSearchTerm.trim().toLowerCase();
+}
+
+function mhRebuildView() {
+  const term = mhNormalizedSearch();
+  mhViewLines = term === "" ? mhMessages.slice() : mhMessages.filter(function (msg) {
+    return msg.text.toLowerCase().indexOf(term) !== -1;
+  });
+  mhBlockHeights = [];
+  for (let b = 0; b < Math.ceil(mhViewLines.length / kMsgBlockRows); b++) {
+    mhBlockHeights.push(0);
+  }
+  mhBlockSum = 0;
+  mhBlockMeasured = 0;
+  mhEstSeed = 0;
+}
+
+function mhApplySearchTerm(value) {
+  mhSearchTerm = value;
+  if (!dhPanelMessages()) {
+    mhRebuildView();
+    mhDomDirty = true;
+    mhUpdateEmpty();
+    return;
+  }
+  mhRenderLog();  // a changed filter starts at the newest matching entry
+}
+
+function mhUpdateEmpty() {
+  const empty = document.getElementById("msgempty");
+  if (!empty) {
+    return;
+  }
+  empty.textContent = mhMessages.length > 0 && mhNormalizedSearch() !== ""
+    ? "No matching messages."
+    : "No messages recorded yet.";
+  empty.style.display = mhViewLines.length === 0 ? "" : "none";
+}
+
+function mhSetMsgEmptyVisible(visible) {
+  const empty = document.getElementById("msgempty");
+  if (empty) {
+    empty.style.display = visible ? "" : "none";
+  }
+}
+
+/* Full message-log render. OMITTED anchorScroll = snap to the newest entry
+ * (first activation, snapshot replay); an anchor restores a reading
+ * position. Mounts only the tail window — the spacers price the rest, so
+ * 1000 messages never become 1000 DOM rows. */
+function mhRenderLog(anchorScroll) {
+  const log = document.getElementById("msglog");
+  if (!log) {
+    return;
+  }
+  const t0 = performance.now();
+  mhRebuildView();
+  log.textContent = "";
+  mhMounted.clear();
+  mhEnsureSpacers();
+  log.append(mhTopSpacer);
+  const n = mhBlockHeights.length;
+  const startBlock = Math.max(0, n - (2 * kMsgOverscanBlocks + 1));
+  let mountedRows = 0;
+  for (let b = startBlock; b < n; b++) {
+    mhMountBlock(log, b);
+    mountedRows += Math.min(kMsgBlockRows, mhViewLines.length - b * kMsgBlockRows);
+  }
+  log.append(mhBottomSpacer);
+  if (n > 0) {
+    mhMeasureMountedBlocks(startBlock, n - 1, 0, mhBlockLayout());
+    const layout = mhBlockLayout();
+    mhSetSpacerHeights(layout.offsets[startBlock],
+      layout.total - layout.offsets[n - 1] - layout.heights[n - 1]);
+  } else {
+    mhSetSpacerHeights(0, 0);
+  }
+  if (anchorScroll === undefined) {
+    log.scrollTop = log.scrollHeight;
+  } else {
+    const max = Math.max(0, log.scrollHeight - log.clientHeight);
+    log.scrollTop = Math.min(max, Math.max(0, anchorScroll));
+  }
+  mhUpdateEmpty();
+  mhDomDirty = false;
+  const t1 = performance.now();
+  console.info("[DialogueHistory] msgrender: view " + mhViewLines.length
+    + " messages, mounted " + mountedRows + " rows in " + (t1 - t0).toFixed(1) + " ms");
+}
+
+/* Width/font invalidation, hidden-safe: stale-mark only while the pane is
+ * not showing (no layout reads on display:none content); otherwise the C17
+ * re-anchor against #msglog. */
+function mhInvalidateHeights() {
+  if (mhBlockHeights.length === 0) {
+    return;
+  }
+  if (!dhPanelMessages()) {
+    mhEstSeed = mhBlockLayout().est;
+    for (let b = 0; b < mhBlockHeights.length; b++) {
+      mhBlockHeights[b] = 0;
+    }
+    mhBlockSum = 0;
+    mhBlockMeasured = 0;
+    return;
+  }
+  const log = document.getElementById("msglog");
+  if (!log) {
+    return;
+  }
+  const before = mhBlockLayout();
+  const entryScroll = log.scrollTop;
+  let anchor = 0;
+  while (anchor < before.heights.length - 1
+      && before.offsets[anchor] + before.heights[anchor] <= entryScroll) {
+    anchor++;
+  }
+  mhEstSeed = before.est;
+  for (let b = 0; b < mhBlockHeights.length; b++) {
+    mhBlockHeights[b] = 0;
+  }
+  mhBlockSum = 0;
+  mhBlockMeasured = 0;
+  mhSetScrollSilently(log, anchor * before.est);
+  mhUpdateWindow();
+  const now = mhBlockLayout();
+  const target = now.offsets[anchor];
+  if (Math.abs(target - log.scrollTop) >= 1) {
+    mhSetScrollSilently(log, target);
+    mhUpdateWindow();
+  }
+}
+
+function mhCheckLogWidth() {
+  const log = document.getElementById("msglog");
+  if (!log) {
+    return;
+  }
+  if (!dhPanelMessages()) {
+    mhLogWidth = -1;  // reseed when the messages pane shows again
+    return;
+  }
+  const w = log.clientWidth;
+  if (mhLogWidth === -1) {
+    mhLogWidth = w;
+    return;
+  }
+  if (w !== mhLogWidth) {
+    mhLogWidth = w;
+    mhInvalidateHeights();
+  }
+}
+
+/* ---- plugin -> JS: message snapshot (independent channel) ----
+ * Replaces the message model. Never touches dialogue state, the tab
+ * selection, scroll, or focus — the view tolerates either arrival order
+ * (message-then-dialogue on DOM-ready replay, or dialogue-then-message). */
+function setMessageHistory(msgs) {
+  msgs = dhParse(msgs, []);
+  if (!Array.isArray(msgs)) {
+    msgs = [];
+  }
+  const log = document.getElementById("msglog");
+  const active = dhPanelMessages() && !!log;
+  /* Capacity-refresh preservation (Phase 3 audit): ViewController pushes a
+   * full snapshot (instead of an append) whenever the native message
+   * buffer is full, so this can arrive on the ACTIVE tab. Capture the
+   * reading position BEFORE the model/DOM is replaced — at-bottom readers
+   * snap to the newest entry; scrolled-up readers keep their exact
+   * scrollTop through the anchored render (same contract as live
+   * appends). */
+  const atBottom = active && (log.scrollTop + log.clientHeight >= log.scrollHeight - 4);
+  const keepScroll = active ? log.scrollTop : 0;
+  mhMessages.length = 0;
+  for (const raw of msgs) {
+    const msg = mhNormalizeMessage(raw);
+    if (msg) {
+      mhMessages.push(msg);
+    }
+  }
+  if (!active) {
+    mhRebuildView();   // the view tracks the new model (measurements reset —
+                       // a replace makes them meaningless)
+    mhDomDirty = true; // the mounted DOM, if any, belongs to the old model
+    return;
+  }
+  if (atBottom) {
+    mhRenderLog();           // snap to the newest entry
+  } else {
+    mhRenderLog(keepScroll); // anchored re-render preserves the position
+  }
+}
+
+/* ---- plugin -> JS: one live message ----
+ * At-bottom readers follow; scrolled-up readers keep their position.
+ * While the messages tab is not showing, the append is model-only + a dirty
+ * flag (zero inactive-DOM rendering, §4.3) and never disturbs the active
+ * tab. The tail-height bookkeeping mirrors appendLine: a recorded partial
+ * tail height was never summed, so zeroing it needs no average undo. */
+function appendMessage(msg) {
+  msg = mhNormalizeMessage(msg);
+  if (!msg) {
+    return;
+  }
+  mhMessages.push(msg);
+  const log = document.getElementById("msglog");
+  if (mhNormalizedSearch() !== "") {
+    const active = dhPanelMessages() && !!log;
+    const atBottom = active && (log.scrollTop + log.clientHeight >= log.scrollHeight - 4);
+    const keepScroll = active ? log.scrollTop : 0;
+    if (!active) {
+      mhRebuildView();
+      mhDomDirty = true;
+      mhUpdateEmpty();
+    } else if (atBottom) {
+      mhRenderLog();
+    } else {
+      mhRenderLog(keepScroll);
+    }
+    return;
+  }
+  if (!dhPanelMessages() || !log) {
+    mhViewLines.push(msg);  // keep the view current — only the DOM lags
+    const prevBlocks = mhBlockHeights.length;
+    if (Math.ceil(mhViewLines.length / kMsgBlockRows) > prevBlocks) {
+      if (prevBlocks > 0) {
+        mhBlockHeights[prevBlocks - 1] = 0;  // filled tail: stale partial height
+      }
+      mhBlockHeights.push(0);
+    } else if (prevBlocks > 0) {
+      mhBlockHeights[prevBlocks - 1] = 0;  // tail grew: force re-measure
+    }
+    mhDomDirty = true;
+    return;
+  }
+  // Visible live append — the at-bottom contract mirrors appendLine.
+  const atBottom = log.scrollTop + log.clientHeight >= log.scrollHeight - 4;
+  mhViewLines.push(msg);
+  mhSetMsgEmptyVisible(false);
+  const prevBlocks = mhBlockHeights.length;
+  const newBlocks = Math.ceil(mhViewLines.length / kMsgBlockRows);
+  if (newBlocks > prevBlocks) {
+    mhBlockHeights.push(0);  // the boundary row starts a new block
+  }
+  const last = newBlocks - 1;
+  if (newBlocks > prevBlocks) {
+    // Boundary crossed: mount the fresh block only when the previous tail
+    // block is mounted (the reader is at the bottom).
+    if (prevBlocks === 0 || mhMounted.has(prevBlocks - 1)) {
+      mhMountBlock(log, last);
+      log.append(mhBottomSpacer);  // keep the spacer the last child
+      mhBlockHeights[last] = mhMounted.get(last).offsetHeight;
+    }
+    mhRefreshSpacers();
+  } else if (mhMounted.has(last)) {
+    const el = mhMounted.get(last);
+    el.append(mhMakeRow(msg));
+    const h = el.offsetHeight;
+    if (mhViewLines.length >= (last + 1) * kMsgBlockRows) {
+      // The tail just filled: count its full height exactly once.
+      mhBlockSum += h;
+      mhBlockMeasured += 1;
+    }
+    mhBlockHeights[last] = h;
+    mhRefreshSpacers();
+  }
+  // else: last block not mounted — state and spacers only.
+  if (atBottom) {
+    log.scrollTop = log.scrollHeight;
   }
 }
 
@@ -1303,6 +2007,9 @@ function dhFreezePanes(pinLog, pinIndex) {
   const jobs = [];
   if (pinLog) {
     jobs.push([document.getElementById("log"), document.getElementById("dialogue")]);
+    // v1.3.0: the message pane freezes the same way during grip resizes
+    // (null-tolerant — legacy worlds without the pane skip it).
+    jobs.push([document.getElementById("msglog"), document.getElementById("messages")]);
   }
   if (pinIndex) {
     jobs.push([document.getElementById("index"), document.getElementById("body")]);
@@ -1399,9 +2106,12 @@ function dhStartDrag(mode) {
       if (mode === "resize") {
         // C18 settle: re-check the width (invalidates iff it changed) and
         // re-window once — the unconditional pass also covers clientHeight-
-        // only resizes.
+        // only resizes. v1.3.0: the message pane settles the same way
+        // (both are no-ops when that pane is hidden/legacy).
         dhCheckLogWidth();
         dhUpdateWindow();
+        mhCheckLogWidth();
+        mhUpdateWindow();
       }
       const rect = dhPanelRect();
       const payload = JSON.stringify({ x: rect.x, y: rect.y, width: rect.width, height: rect.height });
@@ -1467,7 +2177,11 @@ function dhStartSplitDrag(event) {
  * C7: in the "All" view, lines whose bucket is unchecked are skipped; a
  * directly selected quest's view is unaffected by the checkboxes (same
  * precedent as search). */
-function dhRenderLog() {
+/* v1.3.0: optional anchorScroll restores a reading position instead of
+ * snapping to the bottom (tab-switch restore). OMITTED = the frozen
+ * snap-to-bottom behavior (snapshot replay, body_search_smoke's bare
+ * dhRenderLog() calls). */
+function dhRenderLog(anchorScroll) {
   const log = document.getElementById("log");
   const t0 = performance.now();
   dhRebuildView();
@@ -1494,7 +2208,12 @@ function dhRenderLog() {
   } else {
     dhSetSpacerHeights(0, 0);
   }
-  log.scrollTop = log.scrollHeight;
+  if (anchorScroll === undefined) {
+    log.scrollTop = log.scrollHeight;
+  } else {
+    const max = Math.max(0, log.scrollHeight - log.clientHeight);
+    log.scrollTop = Math.min(max, Math.max(0, anchorScroll));
+  }
   dhSetEmptyVisible(dhAllLines.length === 0);
   const t1 = performance.now();
   console.info("[DialogueHistory] render: view " + dhViewLines.length
@@ -1506,6 +2225,27 @@ function setHistory(lines) {
   if (!Array.isArray(lines)) {
     lines = [];
   }
+  // v1.3.0: a fresh dialogue snapshot IS a fresh panel open — select the
+  // Dialogue History tab (no-op in legacy single-pane worlds and when the
+  // panel is already there) and arm the message tab's first-activation
+  // snap. Message contents and scroll survive; message search resets like the
+  // dialogue searches so every fresh open starts unfiltered.
+  if (dhPanelMessages()) {
+    dhSavePaneScroll();
+    dhSetPanelMessages(false);
+    const tabs = dhTabElements();
+    if (tabs) {
+      tabs[0].classList.add("active");
+      tabs[1].classList.remove("active");
+    }
+    dhFocusPos.tabs = 0;
+  }
+  mhMsgsActivated = false;
+  const msgSearch = document.getElementById("msgsearch");
+  if (msgSearch) {
+    msgSearch.value = "";
+  }
+  mhApplySearchTerm("");
   // Full snapshot replay (sent on panel open): reset to the defaults —
   // "All" selected (selection set cleared), search cleared — then apply the
   // persisted filter state (#001; all-checked default when the plugin never
@@ -1528,6 +2268,7 @@ function setHistory(lines) {
   }
   dhRenderIndex();
   dhRenderLog();
+  dhDomDirty = false;  // v1.3.0: the full rebuild above leaves consistent DOM
   dhFocusReset();  // C6/D9: view-open focus — log, or quest index when empty
 }
 
@@ -1569,6 +2310,30 @@ function appendLine(line) {
       dhBodySearch.questMatchIds.add(line.questId);
     }
     dhBodySearchUpdateCount();
+  }
+  if (!dhDialogueVisible()) {
+    // v1.3.0: Message History tab active — the dialogue pane is hidden.
+    // Model-only append + dirty flag: zero inactive-DOM rendering and no
+    // layout reads against display:none content (which would record
+    // 0-height measurements into the running average). The pane re-windows
+    // from the saved scroll on return. Only the tail block can go stale —
+    // appends never touch earlier blocks, and a recorded partial tail
+    // height was never summed, so zeroing it needs no average bookkeeping.
+    if (dhLineInSelection(line)) {
+      const prevBlocks = dhBlockHeights.length;
+      dhViewLines.push(line);
+      const newBlocks = Math.ceil(dhViewLines.length / kBlockRows);
+      if (newBlocks > prevBlocks) {
+        if (prevBlocks > 0) {
+          dhBlockHeights[prevBlocks - 1] = 0;  // filled tail: stale partial height
+        }
+        dhBlockHeights.push(0);
+      } else if (newBlocks > 0) {
+        dhBlockHeights[newBlocks - 1] = 0;  // tail grew: force re-measure
+      }
+    }
+    dhDomDirty = true;
+    return;
   }
   dhRenderIndex();  // cheap (bounded by the buffer size): recount + resort
   // C7: mirror the view predicate — never append a hidden-bucket line
@@ -1639,8 +2404,18 @@ function dhApplyBodyFont(size) {
   if (root && root.style && typeof root.style.setProperty === "function") {
     root.style.setProperty("--dh-font-scale", String(Number(size) / 16));
   }
-  document.getElementById("log").style.fontSize = Number(size) + "px";
+  const log = document.getElementById("log");
+  if (log) {
+    log.style.fontSize = Number(size) + "px";
+  }
   dhInvalidateHeights();  // C17: row heights changed — re-estimate + re-anchor
+  // v1.3.0: the message log carries its own inline px + independent height
+  // state; its invalidation is a separate mh call (hidden-safe).
+  const msglog = document.getElementById("msglog");
+  if (msglog) {
+    msglog.style.fontSize = Number(size) + "px";
+    mhInvalidateHeights();
+  }
 }
 
 function setFontSize(size) {
@@ -1958,8 +2733,13 @@ function dhShowClearOverlay(scope) {
   // sorted ids for a larger set (deterministic payload order). C7: the
   // controller's clear_all action passes scope "all" to force ALL scope
   // regardless of the selection; the button and the focus model pass
-  // nothing and keep the selection-derived behavior.
-  if (scope === "all") {
+  // nothing and keep the selection-derived behavior. v1.3.0: "messages"
+  // scopes to Message History only (shared Clear button / Y on the
+  // messages tab) and never touches the dialogue selection.
+  if (scope === "messages") {
+    dhClearTarget = "messages";
+    dhClearIds = [];
+  } else if (scope === "all") {
     dhClearTarget = "all";
     dhClearIds = [];
   } else if (dhSelectedQuests.size > 1) {
@@ -1980,6 +2760,14 @@ function dhShowClearOverlay(scope) {
       all.textContent = "ALL";
       msg.append(document.createTextNode("This will clear "), all,
         document.createTextNode(" dialogue history. Are you sure?"));
+    } else if (dhClearTarget === "messages") {
+      // v1.3.0 §7.1 DH_ClearMessagesConfirm — ALL keeps the C16 bold red
+      // caps emphasis.
+      const mall = document.createElement("span");
+      mall.className = "clearall";
+      mall.textContent = "ALL";
+      msg.append(document.createTextNode("This will clear "), mall,
+        document.createTextNode(" message history. Are you sure?"));
     } else {
       const name = document.createElement("span");
       name.className = "clearscope";  // "multiple quests" keeps the quest-scope styling
@@ -2005,7 +2793,14 @@ function dhHideClearOverlay() {
 
 function dhConfirmClear() {
   dhHideClearOverlay();
-  if (dhClearTarget === "all") {
+  if (dhClearTarget === "messages") {
+    // v1.3.0: distinct message-clear request — native clears the message
+    // buffer and re-pushes its snapshot; dialogue state is never touched.
+    const fn = window.clearMessagesRequested;
+    if (typeof fn === "function") {  // registered by the plugin (v1.3.0 DLLs)
+      fn("");
+    }
+  } else if (dhClearTarget === "all") {
     const fn = window.clearAllRequested;
     if (typeof fn === "function") {  // registered by the plugin (new DLLs)
       fn("");
@@ -2040,11 +2835,20 @@ function dhOnControllerAction(event) {
     return;
   }
   const action = detail.action;
+  const msgs = dhPanelMessages();  // v1.3.0: route to the ACTIVE tab's history
   if (detail.state === "repeat") {
     if (action === "page_up") {
-      dhBodySearchPageOrMatch(-1);  // AC6: match walk while a term is active
+      if (msgs) {
+        dhFocusPageScroll(-1);  // G6: LB pages the message log
+      } else {
+        dhBodySearchPageOrMatch(-1);  // AC6: match walk while a term is active
+      }
     } else if (action === "page_down") {
-      dhBodySearchPageOrMatch(1);
+      if (msgs) {
+        dhFocusPageScroll(1);  // G6: RB pages the message log
+      } else {
+        dhBodySearchPageOrMatch(1);
+      }
     }
     return;
   }
@@ -2052,19 +2856,29 @@ function dhOnControllerAction(event) {
     return;  // "released" (and anything unknown) is ignored
   }
   if (action === "clear_quest") {
-    if (dhOverlayVisible() || dhSelectedQuests.size === 0) {
-      return;  // already confirming, or no quest scope to clear
+    // G6: X has NO quest action on Message History (dialogue branch frozen).
+    if (msgs || dhOverlayVisible() || dhSelectedQuests.size === 0) {
+      return;  // messages tab: inert; dialogue: already confirming, or no quest scope
     }
     dhShowClearOverlay();
   } else if (action === "clear_all") {
     if (dhOverlayVisible()) {
       return;
     }
-    dhShowClearOverlay("all");
+    // G6: Y confirms a MESSAGE-only clear on the messages tab.
+    dhShowClearOverlay(msgs ? "messages" : "all");
   } else if (action === "page_up") {
-    dhBodySearchPageOrMatch(-1);  // AC6: match walk while a term is active
+    if (msgs) {
+      dhFocusPageScroll(-1);  // G6: LB pages the message log
+    } else {
+      dhBodySearchPageOrMatch(-1);  // AC6: match walk while a term is active
+    }
   } else if (action === "page_down") {
-    dhBodySearchPageOrMatch(1);
+    if (msgs) {
+      dhFocusPageScroll(1);  // G6: RB pages the message log
+    } else {
+      dhBodySearchPageOrMatch(1);
+    }
   } else if (action === "jump_oldest") {
     dhFocusJumpLog(false);
   } else if (action === "jump_newest") {
@@ -2118,6 +2932,9 @@ function dhOnControllerAction(event) {
  * a separate zone entered by ArrowUp from clear and exited back to clear,
  * so the six-zone cycle and its wrap stay byte-for-byte. */
 const dhFocusZoneOrder = ["search", "filters", "quests", "bodysearch", "log", "clear"];
+/* Message History content zones: search -> log -> Clear. Dialogue's six-zone
+ * order remains unchanged. */
+const dhFocusMsgZoneOrder = ["msgsearch", "log", "clear"];
 
 /* Per-zone position: filters = checkbox index (dhBuckets order), quests =
  * visible row index; roving — a zone remembers its position across
@@ -2125,8 +2942,10 @@ const dhFocusZoneOrder = ["search", "filters", "quests", "bodysearch", "log", "c
  * single-position zone (like search/clear) and needs no roving slot.
  * prefs (2026-10-24) = stop index into dhPrefsStops (slider/numeric/
  * pause) for the header cluster zone, which lives OUTSIDE
- * dhFocusZoneOrder (parent ruling V1). */
-const dhFocusPos = { search: 0, filters: 0, quests: 0, log: 0, clear: 0, prefs: 0 };
+ * dhFocusZoneOrder (parent ruling V1). tabs (v1.3.0) = focused tab index
+ * (0 = Dialogue History, 1 = Message History) for the strip zone, which
+ * also lives OUTSIDE the cycle. */
+const dhFocusPos = { search: 0, filters: 0, quests: 0, log: 0, clear: 0, prefs: 0, tabs: 0 };
 let dhFocusZone = "log";
 let dhFocusPrev = null;    // D6: zone saved while the overlay traps focus
 let dhFocusOverlay = -1;   // D6: trap position (0 = confirm, 1 = cancel)
@@ -2177,11 +2996,26 @@ function dhFocusTarget() {
   if (dhFocusZone === "bodysearch") {
     return document.getElementById("bodysearch");
   }
+  if (dhFocusZone === "msgsearch") {
+    return document.getElementById("msgsearch");
+  }
   if (dhFocusZone === "prefs") {
     return dhPrefsTarget();  // 2026-10-24 header cluster (ruling V1)
   }
+  if (dhFocusZone === "tabs") {
+    // v1.3.0 strip: resolves the focused tab button (null in legacy worlds
+    // without the tabstrip markup).
+    const tabs = dhTabElements();
+    if (!tabs) {
+      return null;
+    }
+    const i = dhFocusPos.tabs === 1 ? 1 : 0;
+    dhFocusPos.tabs = i;  // adopt the clamp
+    return tabs[i];
+  }
   if (dhFocusZone === "log") {
-    return document.getElementById("log");
+    // v1.3.0: the log zone resolves to the ACTIVE tab's scroll element.
+    return dhActiveLogElement();
   }
   return document.getElementById("clear");
 }
@@ -2189,9 +3023,9 @@ function dhFocusTarget() {
 /* Move the visible indicator to whatever dhFocusTarget resolves: strip
  * the class from the previous marks (detached rows are harmless no-ops)
  * and add it to the new target. Real DOM focus only accompanies the text
- * zones (#search, #bodysearch, #fontnum — so typing works); leaving one
- * blurs, so typed text can't land in a box while another zone owns the
- * model. */
+ * zones (#search, #bodysearch, #msgsearch, #fontnum — so typing works);
+ * leaving one blurs, so typed text can't land in a box while another zone
+ * owns the model. */
 function dhFocusApply() {
   for (const el of dhFocusMarked) {
     el.classList.remove("dh-focus");
@@ -2204,12 +3038,12 @@ function dhFocusApply() {
   }
   const active = document.activeElement;
   const textBox = active && (active.id === "search" || active.id === "bodysearch"
-    || active.id === "fontnum");
+    || active.id === "msgsearch" || active.id === "fontnum");
   if (textBox && (!el || el !== active)) {
     active.blur();
   }
-  if (el && (el.id === "search" || el.id === "bodysearch" || el.id === "fontnum")
-      && dhFocusOverlay < 0 && typeof el.focus === "function") {
+  if (el && (el.id === "search" || el.id === "bodysearch" || el.id === "msgsearch"
+      || el.id === "fontnum") && dhFocusOverlay < 0 && typeof el.focus === "function") {
     el.focus();
   }
 }
@@ -2220,15 +3054,22 @@ function dhFocusSetZone(zone) {
   dhFocusApply();
 }
 
-/* C7 surface — Left/Right zone cycle (D2): prev/next in dhFocusZoneOrder,
- * cyclic wrap. dir < 0 = prev, > 0 = next. */
+/* C7 surface — Left/Right zone cycle (D2): prev/next in the ACTIVE tab's
+ * zone order, cyclic wrap. dir < 0 = prev, > 0 = next. The strip and prefs
+ * cluster live OUTSIDE the cycle (2026-10-24 ruling V1 precedent; the six-
+ * zone dialogue order is frozen by the c6 harness). */
+function dhActiveZoneOrder() {
+  return dhPanelMessages() ? dhFocusMsgZoneOrder : dhFocusZoneOrder;
+}
+
 function dhFocusCycleZone(dir) {
-  let i = dhFocusZoneOrder.indexOf(dhFocusZone);
+  const order = dhActiveZoneOrder();
+  let i = order.indexOf(dhFocusZone);
   if (i < 0) {
     i = 0;
   }
-  i = (i + (dir < 0 ? -1 : 1) + dhFocusZoneOrder.length) % dhFocusZoneOrder.length;
-  dhFocusSetZone(dhFocusZoneOrder[i]);
+  i = (i + (dir < 0 ? -1 : 1) + order.length) % order.length;
+  dhFocusSetZone(order[i]);
 }
 
 /* D6 — the confirm overlay owns the model while it is up: arrows toggle
@@ -2304,12 +3145,26 @@ function dhFocusReacquireQuest(key) {
  * spacers present to the scrollbar). The scrollTop write rides the
  * existing dhOnScroll -> dhUpdateWindow pass for windowing. */
 
+/* v1.3.0: the scroll helpers resolve the ACTIVE tab's log and accounting —
+ * #log + the dialogue block state on Dialogue History, #msglog + the mh
+ * state on Message History. With a single pane (legacy worlds) this is
+ * byte-identical to the pre-feature behavior. */
+function dhActiveLogElement() {
+  return document.getElementById(dhPanelMessages() ? "msglog" : "log");
+}
+
+function dhActiveBlockTotal() {
+  return dhPanelMessages() ? mhBlockLayout().total : dhBlockLayout().total;
+}
+
 function dhLogLineStepPx() {
-  return dhBlockLayout().est / kBlockRows;
+  return dhPanelMessages()
+    ? mhBlockLayout().est / kMsgBlockRows
+    : dhBlockLayout().est / kBlockRows;
 }
 
 function dhLogScrollLines(delta) {
-  const log = document.getElementById("log");
+  const log = dhActiveLogElement();
   if (!log) {
     return;
   }
@@ -2318,13 +3173,13 @@ function dhLogScrollLines(delta) {
 }
 
 function dhLogScrollPages(delta) {
-  const log = document.getElementById("log");
+  const log = dhActiveLogElement();
   if (!log) {
     return;
   }
   const cur = log.scrollTop;   // reads first...
   const view = log.clientHeight;
-  const max = Math.max(0, dhBlockLayout().total - view);
+  const max = Math.max(0, dhActiveBlockTotal() - view);
   log.scrollTop = Math.min(max, Math.max(0, cur + delta * view));  // ...write last
 }
 
@@ -2337,11 +3192,11 @@ function dhFocusPageScroll(dir) {
 /* C7 surface — oldest/newest jump (LT/RT actions): clamp against the
  * simulated total, then let the scroll event re-window. */
 function dhFocusJumpLog(toNewest) {
-  const log = document.getElementById("log");
+  const log = dhActiveLogElement();
   if (!log) {
     return;
   }
-  const max = Math.max(0, dhBlockLayout().total - log.clientHeight);
+  const max = Math.max(0, dhActiveBlockTotal() - log.clientHeight);
   log.scrollTop = toNewest ? max : 0;
 }
 
@@ -2379,6 +3234,12 @@ function dhFocusMove(dir) {
     return true;
   }
   if (dhFocusZone === "log") {
+    // Dialogue always scrolls. On Message History, Up returns to the search
+    // box above the log instead of cycling or scrolling past the first row.
+    if (dir < 0 && dhPanelMessages() && dhHasTabs()) {
+      dhFocusSetZone("msgsearch");
+      return true;
+    }
     dhLogScrollLines(dir < 0 ? -1 : 1);  // D4: always scroll, never cycle
     return true;
   }
@@ -2422,8 +3283,8 @@ function dhFocusActivate() {
     }
     return false;
   }
-  if (dhFocusZone === "bodysearch") {
-    return true;  // Enter/Space are owned by the input's own handlers (I7)
+  if (dhFocusZone === "bodysearch" || dhFocusZone === "msgsearch") {
+    return true;  // text input owns Enter/Space; filtering needs no activation
   }
   if (dhFocusZone === "prefs") {
     if (dhFocusPos.prefs === 2) {
@@ -2435,10 +3296,21 @@ function dhFocusActivate() {
     }
     return true;  // slider: inert; numeric: its own keydown owns Enter
   }
+  if (dhFocusZone === "tabs") {
+    // v1.3.0: the roving tab is the active tab after every Left/Right
+    // switch, so Enter is normally inert; commit defensively if the two
+    // ever diverge.
+    if (dhFocusPos.tabs !== dhActiveTabIndex()) {
+      dhActivateTab(dhFocusPos.tabs);
+    }
+    return true;
+  }
   if (dhFocusZone === "log") {
     return false;  // nothing to activate
   }
-  dhShowClearOverlay();  // clear button — the existing confirm flow
+  // clear button — the existing confirm flow, scoped to the ACTIVE tab
+  // (v1.3.0: messages mode clears message history only).
+  dhShowClearOverlay(dhPanelMessages() ? "messages" : undefined);
   return true;
 }
 
@@ -2463,7 +3335,7 @@ function dhFocusOnKey(event) {
   }
   if (space && event.target
       && (event.target.id === "search" || event.target.id === "bodysearch"
-        || event.target.id === "fontnum")) {
+        || event.target.id === "msgsearch" || event.target.id === "fontnum")) {
     return false;  // a typed character while a text box owns the real focus
   }
   if (dhFocusOverlay >= 0) {
@@ -2480,19 +3352,26 @@ function dhFocusOnKey(event) {
     return true;
   }
   if (left || right) {
+    if (dhFocusZone === "tabs") {
+      // v1.3.0 design §6.1: on the focused strip Left/Right selects the
+      // adjacent tab and KEEPS focus on the strip (two tabs: either
+      // direction selects the other one).
+      event.preventDefault();
+      dhActivateTab(1 - dhActiveTabIndex());
+      return true;
+    }
     if (dhFocusZone === "prefs") {
       dhPrefsHorizontal(right ? 1 : -1, event);  // ruling V4 — never zone-cycles
       return true;
     }
-    if (dhFocusZone === "search" || dhFocusZone === "bodysearch") {
+    if (dhFocusZone === "search" || dhFocusZone === "bodysearch" || dhFocusZone === "msgsearch") {
       const box = document.getElementById(dhFocusZone);
       if (box && !box.value) {
-        // #007: empty box — nothing to caret over, so Left/Right leave the
-        // zone; a non-empty box keeps them as caret keys (typing UX)
+        // Empty box: Left/Right leave the zone; a nonempty box keeps caret keys.
         event.preventDefault();
         dhFocusCycleZone(right ? 1 : -1);
       }
-      return true;  // D3: caret keys — no preventDefault, default caret move
+      return true;  // caret keys — no preventDefault, default caret move
     }
     event.preventDefault();
     if (dhFocusZone === "filters") {
@@ -2505,16 +3384,28 @@ function dhFocusOnKey(event) {
   if (up || down) {
     event.preventDefault();
     const dir = up ? -1 : 1;
+    if (dhFocusZone === "tabs") {
+      // Down enters the active tab's first content zone; Up enters preferences.
+      dhFocusSetZone(dir > 0 ? (dhPanelMessages() ? "msgsearch" : "search") : "prefs");
+      return true;
+    }
     if (dhFocusZone === "prefs") {
       dhPrefsMove(dir);  // ruling V4 — steps within the cluster, exits to clear
       return true;
     }
     if (dhFocusZone === "search") {
-      dhFocusSetZone("filters");  // D3: the adjacent zone, both directions
+      // D3 adjacent, both directions — with the v1.3.0 tab strip (real
+      // markup) Up returns to the strip per design §6.1; legacy worlds
+      // without the tabstrip keep the frozen search<->filters adjacency.
+      dhFocusSetZone((up && dhHasTabs()) ? "tabs" : "filters");
       return true;
     }
     if (dhFocusZone === "bodysearch") {
       dhFocusSetZone("log");  // spec §6.1: Up/Down leave the box for the log
+      return true;
+    }
+    if (dhFocusZone === "msgsearch") {
+      dhFocusSetZone(dir > 0 ? "log" : "tabs");
       return true;
     }
     if (up && dhFocusZone === "clear") {
@@ -2546,6 +3437,8 @@ function dhFocusOnKey(event) {
       dhFocusActivate();  // contract §4: Space toggles the focused checkbox
     } else if (dhFocusZone === "prefs" && dhFocusPos.prefs === 2) {
       dhFocusActivate();  // ruling V4: Space toggles the pause checkbox
+    } else if (dhFocusZone === "tabs") {
+      dhFocusActivate();  // v1.3.0: Space commits the focused tab like Enter
     }
     return true;  // swallowed elsewhere — no native button/checkbox surprise
   }
@@ -2591,6 +3484,11 @@ function dhFocusSyncFromClick(event) {
       dhFocusApply();
       return;
     }
+    if (id === "msgsearch") {
+      dhFocusZone = "msgsearch";
+      dhFocusApply();
+      return;
+    }
     if (id && id.indexOf("ftype-") === 0) {
       dhFocusZone = "filters";
       const b = dhBuckets.indexOf(id.slice(6));
@@ -2618,6 +3516,19 @@ function dhFocusSyncFromClick(event) {
       return;
     }
     if (id === "log" || (node.classList && node.classList.contains("line"))) {
+      dhFocusZone = "log";
+      dhFocusApply();
+      return;
+    }
+    /* v1.3.0: tab buttons map to the strip zone; the message log/rows map to
+     * the active log's zone (messages mode). */
+    if (id === "tabdialogue" || id === "tabmessage") {
+      dhFocusZone = "tabs";
+      dhFocusPos.tabs = id === "tabdialogue" ? 0 : 1;
+      dhFocusApply();
+      return;
+    }
+    if (id === "msglog" || (node.classList && node.classList.contains("mline"))) {
       dhFocusZone = "log";
       dhFocusApply();
       return;
@@ -2720,6 +3631,11 @@ document.addEventListener("DOMContentLoaded", () => {
     dhBodySearchWireInput(bodySearch);
     dhWireTypingEmit(bodySearch);  // #005: report focus/blur to the plugin
   }
+  const msgSearch = document.getElementById("msgsearch");
+  if (msgSearch) {
+    msgSearch.addEventListener("input", function () { mhApplySearchTerm(msgSearch.value); });
+    dhWireTypingEmit(msgSearch);
+  }
   const bodySearchPrev = document.getElementById("bodysearchprev");
   if (bodySearchPrev) {
     bodySearchPrev.addEventListener("click", dhBodySearchPrev);  // ‹ = older
@@ -2800,6 +3716,22 @@ document.addEventListener("DOMContentLoaded", () => {
   if (log) {
     log.addEventListener("scroll", dhOnScroll);  // C17 windowing, C18 drag-gated
   }
+  /* v1.3.0 Message History: the message log gets its own C17-windowing
+   * scroll handler; tab clicks switch the panel mode. Every lookup is
+   * guarded — old html without the tabstrip/messages pane stays inert
+   * (legacy harness worlds). */
+  const msglog = document.getElementById("msglog");
+  if (msglog) {
+    msglog.addEventListener("scroll", mhOnScroll);
+  }
+  const tabDialogue = document.getElementById("tabdialogue");
+  if (tabDialogue) {
+    tabDialogue.addEventListener("click", function () { dhActivateTab(0); });
+  }
+  const tabMessage = document.getElementById("tabmessage");
+  if (tabMessage) {
+    tabMessage.addEventListener("click", function () { dhActivateTab(1); });
+  }
   const clearBtn = document.getElementById("clear");
   if (clearBtn) {
     // The header is the panel drag handle: keep this mousedown from
@@ -2808,7 +3740,10 @@ document.addEventListener("DOMContentLoaded", () => {
     clearBtn.addEventListener("mousedown", function (event) {
       event.stopPropagation();
     });
-    clearBtn.addEventListener("click", dhShowClearOverlay);
+    // v1.3.0: the shared Clear button scopes to the ACTIVE tab.
+    clearBtn.addEventListener("click", function () {
+      dhShowClearOverlay(dhPanelMessages() ? "messages" : undefined);
+    });
   }
   const overlayConfirm = document.getElementById("overlayconfirm");
   if (overlayConfirm) {
@@ -2841,6 +3776,11 @@ document.addEventListener("DOMContentLoaded", () => {
         dhBodySearchClear();  // clears term + box + count; LB/RB revert
         return;
       }
+      if (target && target.id === "msgsearch" && target.value) {
+        target.value = "";
+        mhApplySearchTerm("");
+        return;
+      }
       if (target && target.id === "search" && target.value) {
         target.value = "";  // symmetric clear for the quest-name box
         dhRenderIndex();
@@ -2852,7 +3792,7 @@ document.addEventListener("DOMContentLoaded", () => {
         dhFocusSetZone("clear");  // leave prefs back to the entry zone
         return;
       }
-      if (target && (target.id === "search" || target.id === "bodysearch")) {
+      if (target && (target.id === "search" || target.id === "bodysearch" || target.id === "msgsearch")) {
         dhFocusSetZone(target.id === "search" ? "filters" : "log");  // blurs the box
         return;
       }
