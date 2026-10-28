@@ -15,6 +15,7 @@
 #include "Core/Message/MessageBuffer.h"
 #include "Infrastructure/Cosave/CosaveStore.h"
 #include "Infrastructure/Hooks/HudMessageSink.h"
+#include "Infrastructure/Hooks/NoteEventSink.h"
 #include "Infrastructure/Hooks/SubtitleHook.h"
 #include "Infrastructure/Input/GameplayInputGate.h"
 #include "Infrastructure/Logging/Log.h"
@@ -428,6 +429,13 @@ namespace F4DH
 		// when the HUDDataModel input observer cannot be installed.
 		if (!Infrastructure::HudMessageSink::Install(messagePipeline, root.settings.verboseCapture)) {
 			root.log.Error("HUD message sink unavailable — message history disabled (dialogue history unaffected)");
+		}
+
+		// Note History M1 diagnostic prototype (v1.4.0): logging-only book-read
+		// and container-changed probes. Degraded, never fatal — no note state
+		// exists at this milestone and every other channel keeps working.
+		if (!Infrastructure::NoteEventSink::Install(root.log, root.settings.verboseCapture)) {
+			root.log.Error("note probe sink unavailable — note runtime prototype disabled (everything else unaffected)");
 		}
 
 		// M3: hand the buffers to the cosave store (registered at plugin load).

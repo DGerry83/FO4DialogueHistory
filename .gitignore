@@ -1,8 +1,12 @@
 # Local-only agent/workflow artifacts (backed up to a separate private remote)
+# NOTES/ is anchored to the repo root on purpose: a bare `NOTES/` rule also
+# matches any directory named Notes anywhere (case-insensitively), which would
+# silently exclude sources such as src/Infrastructure/Notes/ from version
+# control.
 AGENTS.md
 .flybywire/
 docs/
-NOTES/
+/NOTES/
 
 # Build artifacts
 build/
