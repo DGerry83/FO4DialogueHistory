@@ -341,11 +341,13 @@ namespace F4DH::Infrastructure::Notes
 		}
 		a_log.Info(std::format("note probe [seq {}]: base: {}", a_obs.seq, DescribeBookIdentity(*book)));
 
-		// D8: probe both description routes plus the static one; the checklist
-		// compares these candidates against the visible page. Runtime evidence
-		// (seq931-942) adds a fourth candidate when the reference exists:
-		// inherited description with the REFERENCE as parent — the route most
-		// likely to carry stored/alias-resolved instance text.
+		// D8: probe both completed description routes; the checklist compares
+		// these candidates against the visible page. Two further routes are
+		// permanently disabled on OG runtime evidence (session
+		// 2026-10-28_Bug_NoteReadFreeze): the static form-description route
+		// froze the process on an inventory note read, and the reference-parent
+		// route added in the same investigation remains unverified. Each skip
+		// is logged explicitly in the body block below.
 		a_log.Info(std::format("note probe [seq {}]: text-stage inherited begin", a_obs.seq));
 		RE::BSString inheritedText;
 		book->GetDescription(inheritedText, nullptr);
@@ -360,31 +362,10 @@ namespace F4DH::Infrastructure::Notes
 		const std::string_view itemCardView = itemCardText.c_str() ? std::string_view(itemCardText.c_str()) : std::string_view{};
 		const TextStats itemCardStats = AnalyzeText(itemCardView);
 
-		// H2 isolation: GetFormDescription(book) was the final executing stage
-		// before the second freeze. The static raw route is redundant with the
-		// completed inherited/itemCard probes, so leave it absent in this build.
-		const auto formDescription = std::optional<RE::BSFixedStringCS>{};
-		a_log.Info(std::format("note probe [seq {}]: text-stage formDesc disabled for H2 isolation", a_obs.seq));
-		const std::string_view formDescView = formDescription ? std::string_view(formDescription->c_str()) : std::string_view{};
-		const TextStats formDescStats = AnalyzeText(formDescView);
-
-		// H1 A/B isolation: the reference-parent call introduced by dbd11ac is
-		// disabled for this diagnostic build. The other description calls carry
-		// stage markers so a remaining freeze identifies their exact operation.
-		const bool             haveRefRoute = false;
-		RE::BSString           inheritedRefText;
-		std::string_view       inheritedRefView;
-		TextStats              inheritedRefStats{};
-		a_log.Info(std::format("note probe [seq {}]: text-stage inheritedRef disabled for H1 isolation", a_obs.seq));
-
-		a_log.Info(std::format("note probe [seq {}]: text inherited({}) prefix=\"{}\" | itemCard({}) prefix=\"{}\" | formDesc present={} ({}) prefix=\"{}\" | inheritedRef={} ({}) prefix=\"{}\"",
+		a_log.Info(std::format("note probe [seq {}]: text inherited({}) prefix=\"{}\" | itemCard({}) prefix=\"{}\"",
 			a_obs.seq,
 			FormatStats(inheritedStats), SanitizePrefix(inheritedView),
-			FormatStats(itemCardStats), SanitizePrefix(itemCardView),
-			formDescription ? 1 : 0,
-			FormatStats(formDescStats), SanitizePrefix(formDescView),
-			haveRefRoute ? 1 : 0,
-			FormatStats(inheritedRefStats), SanitizePrefix(inheritedRefView)));
+			FormatStats(itemCardStats), SanitizePrefix(itemCardView)));
 
 		// R1: full candidate bodies — the exact visible-page comparison input
 		// for G2. One self-contained escaped line per route; empty vs missing
@@ -393,18 +374,9 @@ namespace F4DH::Infrastructure::Notes
 			a_obs.seq, inheritedView.size(), EscapeForLog(inheritedView)));
 		a_log.Info(std::format("note probe [seq {}]: body itemCard len={} \"{}\"",
 			a_obs.seq, itemCardView.size(), EscapeForLog(itemCardView)));
-		if (formDescription) {
-			a_log.Info(std::format("note probe [seq {}]: body formDesc len={} \"{}\"",
-				a_obs.seq, formDescView.size(), EscapeForLog(formDescView)));
-		} else {
-			a_log.Info(std::format("note probe [seq {}]: body formDesc absent", a_obs.seq));
-		}
-		if (haveRefRoute) {
-			a_log.Info(std::format("note probe [seq {}]: body inheritedRef len={} \"{}\"",
-				a_obs.seq, inheritedRefView.size(), EscapeForLog(inheritedRefView)));
-		} else {
-			a_log.Info(std::format("note probe [seq {}]: body inheritedRef skipped (no bookRef)", a_obs.seq));
-		}
+		// Neither disabled route may be re-enabled without a new safety plan.
+		a_log.Info(std::format("note probe [seq {}]: body formDesc skipped (unsafe static route removed)", a_obs.seq));
+		a_log.Info(std::format("note probe [seq {}]: body inheritedRef skipped (reference-parent route unverified)", a_obs.seq));
 
 		const auto [location, locationVia] = FormatPlayerLocation(a_log);
 		a_log.Info(std::format("note probe [seq {}]: context gameTime={} location='{}' via={}",

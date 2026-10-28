@@ -38,9 +38,11 @@ namespace F4DH::Infrastructure::Notes
 	// thread (dispatched by NoteEventSink through the F4SE task interface) and
 	// performs all engine access: form resolution, magazine-marker probes
 	// (OBJ_BOOK flags / keywords / model / script-metadata availability),
-	// both TESDescription candidates plus the static form-description route
-	// (D8), and Calendar/player location capture. Logging-only; no state is
-	// retained between calls.
+	// both TESDescription candidates (inherited and item-card; the static
+	// form-description route and the reference-parent route are permanently
+	// disabled — OG freeze evidence, 2026-10-28_Bug_NoteReadFreeze), and
+	// Calendar/player location capture. Logging-only; no state is retained
+	// between calls.
 	namespace NoteRecordResolver
 	{
 		void LogReadObservation(const ReadObservation& a_obs, Core::ILogger& a_log);
