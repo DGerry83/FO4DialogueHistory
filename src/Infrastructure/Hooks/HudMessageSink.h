@@ -7,8 +7,9 @@ namespace F4DH::Application
 
 namespace F4DH::Infrastructure
 {
-	// Observer on the engine's accepted-for-display HUD message value. A
-	// REL::HookVft hook on HUDDataModel::PerformInputProcessing calls the
+	// Observer on the engine's HUD display-data value, which can also carry
+	// widget protocol traffic. A REL::HookVft hook on
+	// HUDDataModel::PerformInputProcessing calls the
 	// original first, then reads messagesModel.nextMessageData under its lock
 	// and emits only new values. Empty/unchanged updates allocate nothing;
 	// engine data is never mutated. Installed once at kGameDataReady for the

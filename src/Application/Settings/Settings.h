@@ -3,6 +3,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <string>
+#include <vector>
 
 #include "Core/Geometry/PanelGeometry.h"
 #include "Core/Input/GamepadButtonMap.h"
@@ -23,6 +25,7 @@ namespace F4DH::Application
 		bool          exclusiveTypingInput = true;  // [Settings] ExclusiveTypingInput: while a panel text input is focused, consume keyboard ButtonEvents (handled=kStop) AND block gameplay user events (movement/camera via BSInputEnableManager); 0 disables both — the panel hotkey stays suppressed while typing either way
 		std::size_t   bufferSize = 0;       // 0 = unlimited (no eviction); >0 caps, range 10–500. Dialogue-only; message retention is MessageBufferSize
 		std::size_t   messageBufferSize = Core::MessageBuffer::kDefaultCapacity;  // [Settings] MessageBufferSize: retained HUD messages, 1–1000 (0 clamps to 1); invalid keeps 200. Bounded FIFO — no unlimited mode
+		std::vector<std::string> messageExcludedPrefixes;  // [MessageFilters] ExcludedPrefix entries from the sibling MessageFilters.ini; exact case-sensitive message-text prefixes
 		bool          verboseCapture = false;  // [Diagnostics] VerboseCapture: log every subtitle event at Information level
 		bool          keyProbe = false;        // [Diagnostics] KeyProbe: log every keyboard press code the engine delivers (bind diagnostics)
 		std::uint32_t stressTestKey = 0;       // [Diagnostics] StressTestKey: DIK scan code (INI accepts key names + "off") injecting one synthetic batch; 0 = disabled

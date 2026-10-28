@@ -347,7 +347,7 @@ namespace F4DH
 		static Infrastructure::PrismaViewBridge    bridge;
 		static Application::ViewController         viewController(buffer, messageBuffer, bridge, root.log);
 		static Application::CapturePipeline        pipeline(buffer, viewController, root.log, root.settings.verboseCapture);
-		static Application::MessageCapturePipeline messagePipeline(messageBuffer, viewController, root.log, root.settings.verboseCapture);
+		static Application::MessageCapturePipeline messagePipeline(messageBuffer, viewController, root.log, root.settings.verboseCapture, root.settings.messageExcludedPrefixes);
 		static Application::StressTestInjector     stressInjector(buffer, viewController, root.log, root.settings);
 		static Application::HotkeyController       hotkey(root.settings, viewController, stressInjector);
 

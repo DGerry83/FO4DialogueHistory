@@ -1,30 +1,43 @@
 #include "MessageCapturePipeline.h"
 
 #include <format>
+#include <utility>
 
 #include "Application/View/ViewController.h"
 #include "Core/Message/MessageContentFilter.h"
 
 namespace F4DH::Application
 {
-	MessageCapturePipeline::MessageCapturePipeline(Core::MessageBuffer& buffer, ViewController& viewController, Core::ILogger& logger, bool verboseCapture) :
+	MessageCapturePipeline::MessageCapturePipeline(Core::MessageBuffer& buffer, ViewController& viewController, Core::ILogger& logger, bool verboseCapture, std::vector<std::string> messageExcludedPrefixes) :
 		_buffer(buffer),
 		_viewController(viewController),
 		_logger(logger),
-		_verboseCapture(verboseCapture)
+		_verboseCapture(verboseCapture),
+		_messageExcludedPrefixes(std::move(messageExcludedPrefixes))
 	{}
 
 	void MessageCapturePipeline::OnMessage(const MessageEvent& event)
 	{
-		const bool accepted = Core::MessageContentFilter::ShouldCapture(event.text);
+		const auto excludedPrefix = Core::MessageContentFilter::FindExcludedPrefix(event.text, _messageExcludedPrefixes);
+		const bool accepted = !event.text.empty() && excludedPrefix.empty();
 		if (_verboseCapture) {
-			_logger.Info(std::format(
-				"message: warning={} radio={} throttle={} -> {} | {}",
-				event.isWarningMessage,
-				event.isRadioMessage,
-				event.canBeThrottled,
-				accepted ? "accepted" : "rejected",
-				event.text.substr(0, 60)));
+			if (!excludedPrefix.empty()) {
+				_logger.Info(std::format(
+					"message: warning={} radio={} throttle={} -> rejected (prefix '{}') | {}",
+					event.isWarningMessage,
+					event.isRadioMessage,
+					event.canBeThrottled,
+					excludedPrefix,
+					event.text.substr(0, 60)));
+			} else {
+				_logger.Info(std::format(
+					"message: warning={} radio={} throttle={} -> {} | {}",
+					event.isWarningMessage,
+					event.isRadioMessage,
+					event.canBeThrottled,
+					accepted ? "accepted" : "rejected",
+					event.text.substr(0, 60)));
+			}
 		}
 		if (!accepted) {
 			return;

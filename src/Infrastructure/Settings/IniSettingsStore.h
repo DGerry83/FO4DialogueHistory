@@ -16,6 +16,8 @@ namespace F4DH::Infrastructure
 	// FO4DialogueHistory.preferences.ini ([Settings] FontSize (10–48) and
 	// PauseOnOpen (0/1); numeric FontSize outside the range clamps to the
 	// nearest boundary) whose keys override the main-INI seed independently.
+	// Message History exclusions load separately from the user-editable sibling
+	// FO4DialogueHistory.MessageFilters.ini ([MessageFilters] ExcludedPrefix).
 	class IniSettingsStore final : public Application::ISettingsStore
 	{
 	public:

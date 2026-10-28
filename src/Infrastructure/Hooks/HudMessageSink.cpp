@@ -11,7 +11,8 @@
 
 #include <optional>
 
-// Accepted-display observation through the engine's live HUD data model.
+// Display-data observation through the engine's live HUD data model. The
+// published value can include widget protocols as well as player notifications.
 // HUDDataModel::PerformInputProcessing runs the original model update first;
 // the observer then reads nextMessageData under its lock and emits only value
 // transitions. The earlier RTTI-slot registration was invalid, and
@@ -124,7 +125,7 @@ namespace F4DH::Infrastructure
 		g_original = hook->get();
 
 		g_sink = &a_sink;
-		REX::LogInformation("HudMessageSink: HUDDataModel::PerformInputProcessing observer installed (accepted-display capture active)");
+		REX::LogInformation("HudMessageSink: HUDDataModel::PerformInputProcessing observer installed (HUD display-data capture active)");
 		return true;
 	}
 }

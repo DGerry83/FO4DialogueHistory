@@ -2,6 +2,7 @@
 
 #include "Core/Input/ScanCodeMap.h"
 #include "Core/Input/GamepadButtonMap.h"
+#include "Core/Message/MessageContentFilter.h"
 #include "Core/Settings/ViewPreferences.h"
 
 #include <algorithm>
@@ -31,6 +32,7 @@
 namespace
 {
 	constexpr std::wstring_view kIniFileName{ L"FO4DialogueHistory.ini" };
+	constexpr std::wstring_view kMessageFiltersFileName{ L"FO4DialogueHistory.MessageFilters.ini" };
 	constexpr std::wstring_view kGeometryFileName{ L"FO4DialogueHistory.geometry.ini" };
 	constexpr std::wstring_view kViewFileName{ L"FO4DialogueHistory.view.ini" };
 	constexpr std::wstring_view kPreferencesFileName{ L"FO4DialogueHistory.preferences.ini" };
@@ -477,6 +479,21 @@ namespace F4DH::Infrastructure
 			const auto& f = settings.viewFilters;
 			REX::LogInformation("IniSettingsStore: view filters loaded (main={} side={} misc={} unattributed={})",
 				f.main, f.side, f.misc, f.unattributed);
+		}
+
+		// Message exclusions are user-owned protocol-prefix rules, loaded once
+		// beside the DLL. Missing/empty configuration degrades to no exclusions.
+		const auto messageFiltersPath = ResolveSiblingPath(kMessageFiltersFileName);
+		const auto messageFilterLines = ReadLines(messageFiltersPath);
+		if (messageFilterLines.empty()) {
+			REX::LogWarning(L"FO4DialogueHistory.MessageFilters.ini not found or empty ({}); no message prefix exclusions active", messageFiltersPath);
+		} else {
+			settings.messageExcludedPrefixes = Core::MessageContentFilter::ParseExcludedPrefixes(messageFilterLines);
+			if (settings.messageExcludedPrefixes.empty()) {
+				REX::LogWarning(L"FO4DialogueHistory.MessageFilters.ini has no valid ExcludedPrefix entries ({}); no message prefix exclusions active", messageFiltersPath);
+			} else {
+				REX::LogInformation("IniSettingsStore: loaded {} message exclusion prefixes", settings.messageExcludedPrefixes.size());
+			}
 		}
 
 		// Preferences sidecar: valid sibling keys override the main-INI seed
