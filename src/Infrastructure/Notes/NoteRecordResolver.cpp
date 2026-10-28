@@ -360,9 +360,11 @@ namespace F4DH::Infrastructure::Notes
 		const std::string_view itemCardView = itemCardText.c_str() ? std::string_view(itemCardText.c_str()) : std::string_view{};
 		const TextStats itemCardStats = AnalyzeText(itemCardView);
 
-		a_log.Info(std::format("note probe [seq {}]: text-stage formDesc begin", a_obs.seq));
-		const auto formDescription = RE::TESDescription::GetFormDescription(book);
-		a_log.Info(std::format("note probe [seq {}]: text-stage formDesc end", a_obs.seq));
+		// H2 isolation: GetFormDescription(book) was the final executing stage
+		// before the second freeze. The static raw route is redundant with the
+		// completed inherited/itemCard probes, so leave it absent in this build.
+		const auto formDescription = std::optional<RE::BSFixedStringCS>{};
+		a_log.Info(std::format("note probe [seq {}]: text-stage formDesc disabled for H2 isolation", a_obs.seq));
 		const std::string_view formDescView = formDescription ? std::string_view(formDescription->c_str()) : std::string_view{};
 		const TextStats formDescStats = AnalyzeText(formDescView);
 
