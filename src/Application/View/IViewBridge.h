@@ -18,6 +18,9 @@ namespace F4DH::Application
 		using ClearNotesCallback = void (*)();
 		using NoteBodyRequestCallback = void (*)(std::uint64_t);
 		using NoteSearchRequestCallback = void (*)(const std::string&);
+		using NoteFolderCreateCallback = void (*)(std::uint64_t, const std::string&);
+		using NoteMoveCallback = void (*)(std::uint64_t, std::uint64_t);
+		using NoteDeleteCallback = void (*)(std::uint64_t);
 
 		virtual ~IViewBridge() = default;
 
@@ -34,6 +37,7 @@ namespace F4DH::Application
 		virtual void AppendMessage(const std::string& json) = 0;
 		virtual void PushNoteSnapshot(const std::string& json) = 0;
 		virtual void PushNoteBody(const std::string& json) = 0;
+		virtual void PushNoteOperationResult(const std::string& json) = 0;
 		virtual void SetCloseCallback(CloseCallback fn) = 0;
 		virtual void SetClearCallbacks(ClearAllCallback allFn, ClearQuestCallback questFn) = 0;
 		virtual void SetClearQuestsCallback(ClearQuestsCallback questsFn) = 0;
@@ -41,6 +45,9 @@ namespace F4DH::Application
 		virtual void SetClearNotesCallback(ClearNotesCallback fn) = 0;
 		virtual void SetNoteBodyRequestCallback(NoteBodyRequestCallback fn) = 0;
 		virtual void SetNoteSearchRequestCallback(NoteSearchRequestCallback fn) = 0;
+		virtual void SetNoteFolderCreateCallback(NoteFolderCreateCallback fn) = 0;
+		virtual void SetNoteMoveCallback(NoteMoveCallback fn) = 0;
+		virtual void SetNoteDeleteCallback(NoteDeleteCallback fn) = 0;
 		[[nodiscard]] virtual bool IsHealthy() = 0;
 	};
 }

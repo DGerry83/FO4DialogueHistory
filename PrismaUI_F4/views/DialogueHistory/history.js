@@ -2741,7 +2741,7 @@ function dhOverlayVisible() {
 }
 
 function dhShowClearOverlay(scope) {
-  if (scope === "messages" || scope === "notes") {
+  if (scope === "messages" || scope === "notes" || scope === "deleteNote") {
     dhClearTarget = scope;
     dhClearIds = [];
   } else if (scope === "all") {
@@ -2760,7 +2760,14 @@ function dhShowClearOverlay(scope) {
     const all = document.createElement("span");
     all.className = "clearall";
     all.textContent = "ALL";
-    if (dhClearTarget === "all" || dhClearTarget === "messages" || dhClearTarget === "notes") {
+    if (dhClearTarget === "deleteNote") {
+      const note = nhById(nhSelectedId);
+      const name = document.createElement("span");
+      name.className = "clearscope";
+      name.textContent = note ? note.title : "this note";
+      msg.append(document.createTextNode("This will delete "), name,
+        document.createTextNode(". Are you sure?"));
+    } else if (dhClearTarget === "all" || dhClearTarget === "messages" || dhClearTarget === "notes") {
       const label = dhClearTarget === "all" ? " dialogue" : dhClearTarget === "messages" ? " message" : " note";
       msg.append(document.createTextNode("This will clear "), all,
         document.createTextNode(label + " history. Are you sure?"));
@@ -2794,6 +2801,11 @@ function dhConfirmClear() {
     if (typeof fn === "function") {
       fn("");
     }
+  } else if (dhClearTarget === "deleteNote") {
+    const fn = window.noteDeleteRequested;
+    if (typeof fn === "function") {
+      fn(String(nhSelectedId));
+    }
   } else if (dhClearTarget === "notes") {
     const fn = window.clearNotesRequested;
     if (typeof fn === "function") {
@@ -2822,10 +2834,17 @@ function dhConfirmClear() {
  * this view owns selection, lazy body display, and per-tab reading state. */
 const nhNotes = [];
 const nhBodies = new Map();
+const nhFolders = [];
+const nhExpanded = new Set();
+let nhSelectedFolderId = 0;
 let nhSelectedId = 0;
 let nhSearchTerm = "";
 let nhSavedBodyScroll = 0;
 let nhSavedListScroll = 0;
+let nhMoveId = 0;
+let nhDragId = 0;
+let nhPreSearchExpanded = null;
+let nhOperationMessage = "";
 
 function nhNormalizeItem(raw) {
   raw = dhParse(raw, null);
@@ -2835,7 +2854,8 @@ function nhNormalizeItem(raw) {
   return {
     id: raw.id,
     title: typeof raw.title === "string" && raw.title ? raw.title : "Untitled note",
-    sequence: typeof raw.sequence === "number" ? raw.sequence : 0
+    sequence: typeof raw.sequence === "number" ? raw.sequence : 0,
+    folderId: typeof raw.folderId === "number" ? raw.folderId : 0
   };
 }
 
@@ -2871,6 +2891,100 @@ function nhFormatEncounter(first) {
     + (typeof first.location === "string" && first.location ? " — " + first.location : "");
 }
 
+function nhFolderById(id) {
+  for (const folder of nhFolders) {
+    if (folder.id === id) {
+      return folder;
+    }
+  }
+  return null;
+}
+
+function nhSetNotice(text) {
+  nhOperationMessage = text;
+  const notice = document.getElementById("notenotice");
+  if (notice) {
+    notice.textContent = text;
+  }
+}
+
+function nhMakeFolderRow(folder, depth) {
+  const row = document.createElement("div");
+  row.className = "nfolder";
+  row.dataset.folderId = String(folder.id);
+  row.style.paddingLeft = (8 + depth * 14) + "px";
+  const expanded = nhExpanded.has(folder.id) || nhSearchTerm.trim() !== "";
+  row.textContent = (expanded ? "▾ " : "▸ ") + folder.name;
+  row.addEventListener("click", function (event) {
+    event.stopPropagation();
+    if (nhMoveId) {
+      nhFinishMove(folder.id);
+    } else {
+      nhSelectedFolderId = folder.id;
+      if (nhExpanded.has(folder.id)) {
+        nhExpanded.delete(folder.id);
+      } else {
+        nhExpanded.add(folder.id);
+      }
+      nhRenderList();
+    }
+  });
+  row.addEventListener("dragover", function (event) {
+    event.preventDefault();
+    row.classList.add("drop-target");
+  });
+  row.addEventListener("dragleave", function () { row.classList.remove("drop-target"); });
+  row.addEventListener("drop", function (event) {
+    event.preventDefault();
+    event.stopPropagation();
+    row.classList.remove("drop-target");
+    if (nhDragId) {
+      nhFinishMove(folder.id);
+    }
+  });
+  return row;
+}
+
+function nhMakeNoteRow(note, depth) {
+  const row = document.createElement("div");
+  row.className = "nentry" + (note.id === nhSelectedId ? " active" : "");
+  row.dataset.id = String(note.id);
+  row.style.paddingLeft = (8 + depth * 14) + "px";
+  row.textContent = note.title;
+  row.draggable = true;
+  row.addEventListener("click", function () { nhSelectNote(note.id); });
+  row.addEventListener("dragstart", function (event) {
+    nhDragId = note.id;
+    nhMoveId = note.id;
+    row.classList.add("dragging");
+    if (event.dataTransfer) {
+      event.dataTransfer.setData("text/plain", String(note.id));
+      event.dataTransfer.effectAllowed = "move";
+    }
+  });
+  row.addEventListener("dragend", function () {
+    nhDragId = 0;
+    row.classList.remove("dragging");
+  });
+  return row;
+}
+
+function nhRenderChildren(list, parentId, depth) {
+  const folders = nhFolders.filter(function (folder) { return folder.parentFolderId === parentId; });
+  folders.sort(function (a, b) { return a.ordinal - b.ordinal; });
+  for (const folder of folders) {
+    list.append(nhMakeFolderRow(folder, depth));
+    if (nhExpanded.has(folder.id) || nhSearchTerm.trim() !== "") {
+      nhRenderChildren(list, folder.id, depth + 1);
+    }
+  }
+  const notes = nhNotes.filter(function (note) { return note.folderId === parentId; });
+  notes.sort(function (a, b) { return a.sequence - b.sequence; });
+  for (const note of notes) {
+    list.append(nhMakeNoteRow(note, depth));
+  }
+}
+
 function nhRenderList() {
   const list = document.getElementById("notelist");
   if (!list) {
@@ -2879,19 +2993,58 @@ function nhRenderList() {
   while (list.firstChild) {
     list.removeChild(list.firstChild);
   }
-  for (const note of nhNotes) {
-    const row = document.createElement("div");
-    row.className = "nentry" + (note.id === nhSelectedId ? " active" : "");
-    row.dataset.id = String(note.id);
-    row.textContent = note.title;
-    row.addEventListener("click", function () { nhSelectNote(note.id); });
-    list.append(row);
-  }
+  const unfiled = { id: 0, parentFolderId: 0, name: "Unfiled", ordinal: 0 };
+  list.append(nhMakeFolderRow(unfiled, 0));
+  nhRenderChildren(list, 0, 0);
   const empty = document.getElementById("noteempty");
   if (empty) {
     empty.textContent = nhSearchTerm.trim() ? "No matching notes." : "No notes read yet.";
     empty.style.display = nhNotes.length === 0 ? "" : "none";
   }
+}
+
+function nhCreateFolder() {
+  const input = document.getElementById("newfoldername");
+  const fn = window.noteFolderCreateRequested;
+  if (!input || typeof fn !== "function") {
+    return;
+  }
+  fn(nhSelectedFolderId + "\n" + input.value);
+}
+
+function nhStartMove() {
+  if (!nhById(nhSelectedId)) {
+      nhSetNotice("Select a note to move.");
+    return;
+  }
+  nhMoveId = nhSelectedId;
+  nhSetNotice("Move note: choose a folder, then A to confirm; B cancels.");
+}
+
+function nhFinishMove(folderId) {
+  if (!nhMoveId) {
+    return;
+  }
+  const fn = window.noteMoveRequested;
+  if (typeof fn === "function") {
+    fn(nhMoveId + "\n" + folderId);
+  }
+  nhMoveId = 0;
+  nhDragId = 0;
+}
+
+function nhDeleteSelected() {
+  if (nhById(nhSelectedId)) {
+    dhShowClearOverlay("deleteNote");
+  }
+}
+
+function nhOperationResult(input) {
+  const result = dhParse(input, null);
+  if (!result || typeof result !== "object") {
+    return;
+  }
+  nhSetNotice(result.message || (result.ok ? "Done." : "Operation failed."));
 }
 
 function nhRenderDetail() {
@@ -2957,18 +3110,49 @@ function nhRestorePane() {
 
 function setNoteHistory(input) {
   const parsed = dhParse(input, []);
+  const wasSearching = nhSearchTerm.trim() !== "";
+  if (!wasSearching && nhPreSearchExpanded === null) {
+    nhPreSearchExpanded = new Set(nhExpanded);
+  }
   nhNotes.length = 0;
-  if (Array.isArray(parsed)) {
-    for (const raw of parsed) {
-      const note = nhNormalizeItem(raw);
-      if (note) {
-        nhNotes.push(note);
-      }
+  nhFolders.length = 0;
+  const rawNotes = Array.isArray(parsed) ? parsed : (Array.isArray(parsed.notes) ? parsed.notes : []);
+  for (const raw of rawNotes) {
+    const note = nhNormalizeItem(raw);
+    if (note) {
+      nhNotes.push(note);
     }
+  }
+  const rawFolders = Array.isArray(parsed.folders) ? parsed.folders : [];
+  for (const raw of rawFolders) {
+    if (!raw || typeof raw.id !== "number" || raw.id <= 0) {
+      continue;
+    }
+    nhFolders.push({
+      id: raw.id,
+      parentFolderId: typeof raw.parentId === "number" ? raw.parentId : 0,
+      name: typeof raw.name === "string" && raw.name ? raw.name : "Folder",
+      ordinal: typeof raw.ordinal === "number" ? raw.ordinal : 0
+    });
+  }
+  for (const id of Array.from(nhExpanded)) {
+    if (!nhFolderById(id)) {
+      nhExpanded.delete(id);
+    }
+  }
+  if (!nhFolderById(nhSelectedFolderId)) {
+    nhSelectedFolderId = 0;
   }
   if (!nhById(nhSelectedId)) {
     nhSelectedId = 0;
     nhSavedBodyScroll = 0;
+  }
+  if (wasSearching && nhSearchTerm.trim() === "" && nhPreSearchExpanded !== null) {
+    nhExpanded.clear();
+    for (const id of nhPreSearchExpanded) {
+      nhExpanded.add(id);
+    }
+    nhPreSearchExpanded = null;
   }
   if (dhPanelNotes()) {
     nhRenderList();
@@ -2998,6 +3182,9 @@ function nhApplySearchTerm(value) {
 function nhResetFreshOpen() {
   nhSearchTerm = "";
   nhSelectedId = 0;
+  nhSelectedFolderId = 0;
+  nhMoveId = 0;
+  nhDragId = 0;
   nhSavedBodyScroll = 0;
   nhSavedListScroll = 0;
   const search = document.getElementById("notesearch");
@@ -3076,6 +3263,12 @@ function dhOnControllerAction(event) {
     return;
   }
   if (action === "clear_quest") {
+    if (tab === 2) {
+      if (!dhOverlayVisible()) {
+        nhStartMove();
+      }
+      return;
+    }
     if (tab !== 0 || dhOverlayVisible() || dhSelectedQuests.size === 0) {
       return;
     }
@@ -3112,8 +3305,12 @@ function dhOnControllerAction(event) {
     }
     dhFocusActivate();
   } else if (action === "close") {
-    if (dhOverlayVisible()) {
-      dhHideClearOverlay();  // dismiss only; the panel stays open
+    if (nhMoveId) {
+      nhMoveId = 0;
+      nhDragId = 0;
+      nhSetNotice("Move canceled.");
+    } else if (dhOverlayVisible()) {
+      dhHideClearOverlay();
     } else {
       dhSend("closeRequested");
     }
@@ -3889,6 +4086,27 @@ document.addEventListener("DOMContentLoaded", () => {
     });
     dhWireTypingEmit(noteSearch);
   }
+  const newFolderName = document.getElementById("newfoldername");
+  if (newFolderName) {
+    dhWireTypingEmit(newFolderName);
+    newFolderName.addEventListener("keydown", function (event) {
+      if (event.key === "Enter" || event.keyCode === 13) {
+        nhCreateFolder();
+      }
+    });
+  }
+  const noteCreate = document.getElementById("notecreate");
+  if (noteCreate) {
+    noteCreate.addEventListener("click", nhCreateFolder);
+  }
+  const noteMove = document.getElementById("notemove");
+  if (noteMove) {
+    noteMove.addEventListener("click", nhStartMove);
+  }
+  const noteDelete = document.getElementById("notedelete");
+  if (noteDelete) {
+    noteDelete.addEventListener("click", nhDeleteSelected);
+  }
   const bodySearchPrev = document.getElementById("bodysearchprev");
   if (bodySearchPrev) {
     bodySearchPrev.addEventListener("click", dhBodySearchPrev);  // ‹ = older
@@ -4012,6 +4230,12 @@ document.addEventListener("DOMContentLoaded", () => {
   document.addEventListener("keydown", (event) => {
     // Ultralight reports Escape as "Unidentified" — match by keyCode.
     if (event.key === "Escape" || event.keyCode === 27) {
+      if (nhMoveId) {
+        nhMoveId = 0;
+        nhDragId = 0;
+        nhSetNotice("Move canceled.");
+        return;
+      }
       if (dhOverlayVisible()) {
         dhHideClearOverlay();  // dismiss only; the panel stays open
         return;

@@ -45,6 +45,9 @@ namespace F4DH::Infrastructure
 		PrismaViewBridge::ClearNotesCallback g_clearNotesCallback{ nullptr };
 		PrismaViewBridge::NoteBodyRequestCallback g_noteBodyRequestCallback{ nullptr };
 		PrismaViewBridge::NoteSearchRequestCallback g_noteSearchRequestCallback{ nullptr };
+		PrismaViewBridge::NoteFolderCreateCallback g_noteFolderCreateCallback{ nullptr };
+		PrismaViewBridge::NoteMoveCallback g_noteMoveCallback{ nullptr };
+		PrismaViewBridge::NoteDeleteCallback g_noteDeleteCallback{ nullptr };
 		PrismaViewBridge::TypingStateCallback g_typingStateCallback;
 		std::string                      g_snapshotCache;
 		std::string                      g_messageSnapshotCache;
@@ -152,6 +155,46 @@ namespace F4DH::Infrastructure
 			const std::string term = a_payload ? a_payload : "";
 			Dispatch([term] {
 				if (g_noteSearchRequestCallback) g_noteSearchRequestCallback(term);
+			});
+		}
+
+		void OnNoteFolderCreateRequested(const char* a_payload)
+		{
+			const std::string payload = a_payload ? a_payload : "";
+			const auto newline = payload.find('\n');
+			if (newline == std::string::npos || newline + 1 >= payload.size()) return;
+			std::uint64_t parentId = 0;
+			const auto parsed = std::from_chars(payload.data(), payload.data() + newline, parentId);
+			if (parsed.ec != std::errc() || parsed.ptr != payload.data() + newline) return;
+			const auto name = payload.substr(newline + 1);
+			Dispatch([parentId, name] {
+				if (g_noteFolderCreateCallback) g_noteFolderCreateCallback(parentId, name);
+			});
+		}
+
+		void OnNoteMoveRequested(const char* a_payload)
+		{
+			const std::string payload = a_payload ? a_payload : "";
+			const auto newline = payload.find('\n');
+			if (newline == std::string::npos) return;
+			std::uint64_t entryId = 0, folderId = 0;
+			const auto first = std::from_chars(payload.data(), payload.data() + newline, entryId);
+			const auto second = std::from_chars(payload.data() + newline + 1, payload.data() + payload.size(), folderId);
+			if (first.ec != std::errc() || first.ptr != payload.data() + newline ||
+				second.ec != std::errc() || second.ptr != payload.data() + payload.size() || entryId == 0) return;
+			Dispatch([entryId, folderId] {
+				if (g_noteMoveCallback) g_noteMoveCallback(entryId, folderId);
+			});
+		}
+
+		void OnNoteDeleteRequested(const char* a_payload)
+		{
+			const std::string payload = a_payload ? a_payload : "";
+			std::uint64_t entryId = 0;
+			const auto parsed = std::from_chars(payload.data(), payload.data() + payload.size(), entryId);
+			if (parsed.ec != std::errc() || parsed.ptr != payload.data() + payload.size() || entryId == 0) return;
+			Dispatch([entryId] {
+				if (g_noteDeleteCallback) g_noteDeleteCallback(entryId);
 			});
 		}
 
@@ -320,6 +363,9 @@ namespace F4DH::Infrastructure
 			g_api->RegisterJSListener(a_view, "clearNotesRequested", &OnClearNotesRequested);
 			g_api->RegisterJSListener(a_view, "noteBodyRequested", &OnNoteBodyRequested);
 			g_api->RegisterJSListener(a_view, "noteSearchRequested", &OnNoteSearchRequested);
+			g_api->RegisterJSListener(a_view, "noteFolderCreateRequested", &OnNoteFolderCreateRequested);
+			g_api->RegisterJSListener(a_view, "noteMoveRequested", &OnNoteMoveRequested);
+			g_api->RegisterJSListener(a_view, "noteDeleteRequested", &OnNoteDeleteRequested);
 			g_api->RegisterJSListener(a_view, "typingStateChanged", &OnTypingStateChanged);
 			g_api->RegisterJSListener(a_view, "viewPreferencesChanged", &OnViewPreferencesChanged);  // font slider / numeric / pause checkbox commits
 			// C7: V12 controller actions (gamepad). Bound only when the runtime
@@ -619,6 +665,18 @@ namespace F4DH::Infrastructure
 		}
 	}
 
+	void PrismaViewBridge::PushNoteOperationResult(const std::string& json)
+	{
+		if (!_api || _view == 0) return;
+		if (!_api->IsGameThread()) {
+			Dispatch([this, json] { PushNoteOperationResult(json); });
+			return;
+		}
+		if (IsHealthy()) {
+			_api->InteropCall(_view, "nhOperationResult", json.c_str());
+		}
+	}
+
 	void PrismaViewBridge::SetCloseCallback(CloseCallback fn)
 	{
 		_closeCallback = fn;
@@ -661,6 +719,24 @@ namespace F4DH::Infrastructure
 	{
 		_noteSearchRequestCallback = fn;
 		g_noteSearchRequestCallback = fn;
+	}
+
+	void PrismaViewBridge::SetNoteFolderCreateCallback(NoteFolderCreateCallback fn)
+	{
+		_noteFolderCreateCallback = fn;
+		g_noteFolderCreateCallback = fn;
+	}
+
+	void PrismaViewBridge::SetNoteMoveCallback(NoteMoveCallback fn)
+	{
+		_noteMoveCallback = fn;
+		g_noteMoveCallback = fn;
+	}
+
+	void PrismaViewBridge::SetNoteDeleteCallback(NoteDeleteCallback fn)
+	{
+		_noteDeleteCallback = fn;
+		g_noteDeleteCallback = fn;
 	}
 
 	void PrismaViewBridge::SetTypingStateCallback(TypingStateCallback fn)

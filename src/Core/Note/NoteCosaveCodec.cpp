@@ -1,5 +1,8 @@
 #include "NoteCosaveCodec.h"
 
+#include "NoteFolderRules.h"
+
+#include <algorithm>
 #include <string>
 
 namespace
@@ -127,10 +130,34 @@ namespace F4DH::Core
 		return out;
 	}
 
+	std::vector<std::byte> NoteCosaveCodec::EncodeV2(const std::vector<NoteRecord>& a_records, const std::vector<NoteFolder>& a_folders)
+	{
+		if (a_records.size() > kMaxNotes || a_folders.size() > kMaxFolders) return {};
+		auto out = Encode(a_records);
+		if (out.empty() && !a_records.empty()) return {};
+		for (const auto& record : a_records) WriteU64(out, record.folderId);
+		WriteU32(out, static_cast<std::uint32_t>(a_folders.size()));
+		for (const auto& folder : a_folders) {
+			if (!ValidString(folder.name) || NoteFolderRules::NormalizeName(folder.name) != folder.name) return {};
+			WriteU64(out, folder.folderId);
+			WriteU64(out, folder.parentFolderId);
+			WriteU32(out, folder.ordinal);
+			WriteString(out, folder.name);
+		}
+		return out;
+	}
+
 	bool NoteCosaveCodec::Decode(std::span<const std::byte> a_data, std::vector<NoteRecord>& a_outRecords, std::uint32_t a_version)
 	{
+		std::vector<NoteFolder> ignored;
+		return Decode(a_data, a_outRecords, ignored, a_version);
+	}
+
+	bool NoteCosaveCodec::Decode(std::span<const std::byte> a_data, std::vector<NoteRecord>& a_outRecords, std::vector<NoteFolder>& a_outFolders, std::uint32_t a_version)
+	{
 		a_outRecords.clear();
-		if (a_version != 1) return false;
+		a_outFolders.clear();
+		if (a_version != 1 && a_version != 2) return false;
 
 		Reader reader(a_data);
 		std::uint32_t count = 0;
@@ -172,10 +199,52 @@ namespace F4DH::Core
 			}
 			if (record.firstEncounter) record.firstEncounter->location = std::move(location);
 			else if (!location.empty()) return false;
+			if (a_version == 2 && !reader.U64(record.folderId)) return false;
 			decoded.push_back(std::move(record));
+		}
+
+		if (a_version == 1) {
+			if (!reader.AtEnd()) return false;
+			a_outRecords = std::move(decoded);
+			return true;
+		}
+
+		std::uint32_t folderCount = 0;
+		if (!reader.U32(folderCount) || folderCount > kMaxFolders) return false;
+		std::vector<NoteFolder> folders;
+		for (std::uint32_t i = 0; i < folderCount; ++i) {
+			NoteFolder folder;
+			if (!reader.U64(folder.folderId) || !reader.U64(folder.parentFolderId) ||
+				!reader.U32(folder.ordinal) || !reader.String(folder.name)) {
+				return false;
+			}
+			if (folder.folderId == 0 || folder.ordinal == 0 || folder.name.empty() ||
+				NoteFolderRules::NormalizeName(folder.name) != folder.name) {
+				return false;
+			}
+			for (const auto& other : folders) {
+				if (other.folderId == folder.folderId) return false;
+				if (other.parentFolderId == folder.parentFolderId && NoteFolderRules::SameName(other.name, folder.name)) return false;
+			}
+			if (folder.parentFolderId != 0) {
+				std::uint32_t depth = 1;
+				auto parent = folder.parentFolderId;
+				while (parent != 0) {
+					const auto it = std::ranges::find_if(folders, [&](const NoteFolder& candidate) { return candidate.folderId == parent; });
+					if (it == folders.end() || ++depth > 3) return false;
+					parent = it->parentFolderId;
+				}
+			}
+			folders.push_back(std::move(folder));
+		}
+		for (const auto& record : decoded) {
+			if (record.folderId != 0 && std::ranges::find_if(folders, [&](const NoteFolder& folder) { return folder.folderId == record.folderId; }) == folders.end()) {
+				return false;
+			}
 		}
 		if (!reader.AtEnd()) return false;
 		a_outRecords = std::move(decoded);
+		a_outFolders = std::move(folders);
 		return true;
 	}
 }

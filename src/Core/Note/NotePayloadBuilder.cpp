@@ -30,6 +30,32 @@ namespace F4DH::Core
 		return json;
 	}
 
+	std::string NotePayloadBuilder::BuildTree(const std::vector<NoteFolder>& a_folders, const std::vector<NoteListItem>& a_items)
+	{
+		std::string json = "{\"folders\":[";
+		for (std::size_t i = 0; i < a_folders.size(); ++i) {
+			if (i != 0) json += ',';
+			const auto& folder = a_folders[i];
+			json += std::format("{{\"id\":{},\"parentId\":{},\"name\":\"{}\",\"ordinal\":{}}}",
+				folder.folderId, folder.parentFolderId, Escape(folder.name), folder.ordinal);
+		}
+		json += "],\"notes\":[";
+		for (std::size_t i = 0; i < a_items.size(); ++i) {
+			if (i != 0) json += ',';
+			const auto& item = a_items[i];
+			json += std::format("{{\"id\":{},\"folderId\":{},\"title\":\"{}\",\"sequence\":{}}}",
+				item.entryId, item.folderId, Escape(item.title), item.firstReadSequence);
+		}
+		json += "]}";
+		return json;
+	}
+
+	std::string NotePayloadBuilder::BuildOperationResult(const NoteOperation& a_result)
+	{
+		return std::format("{{\"ok\":{},\"id\":{},\"message\":\"{}\"}}",
+			a_result.ok ? "true" : "false", a_result.id, Escape(a_result.message));
+	}
+
 	std::string NotePayloadBuilder::BuildBody(const NoteBodyResult& a_result)
 	{
 		std::string encounter = "null";

@@ -725,3 +725,62 @@ html, body {
   outline: 2px solid #7BFF7B;
   outline-offset: -2px;
 }
+#notebar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+#notebar input {
+  width: auto;
+  min-width: 100px;
+}
+#newfoldername {
+  flex: 1;
+  padding: 4px 6px;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid #2B5B2B;
+  color: #D7FFD7;
+  font: inherit;
+}
+#notecreate,
+#notemove,
+#notedelete {
+  padding: 3px 8px;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid #2B5B2B;
+  color: #D7FFD7;
+  font: inherit;
+  cursor: pointer;
+}
+#notenotice {
+  flex: none;
+  padding: 3px 10px;
+  color: #4C8A4C;
+  border-bottom: 1px solid #2B5B2B;
+}
+.nfolder {
+  padding: 6px 8px;
+  color: #7BFF7B;
+  font-weight: bold;
+  cursor: pointer;
+  user-select: none;
+}
+.nfolder:hover,
+.nfolder.drop-target {
+  background: rgba(43, 91, 43, 0.55);
+}
+.nfolder.dh-focus,
+.nentry.dh-focus,
+#notecreate.dh-focus,
+#notemove.dh-focus,
+#notedelete.dh-focus {
+  outline: 2px solid #7BFF7B;
+  outline-offset: -2px;
+}
+.nentry[draggable="true"] {
+  cursor: grab;
+}
+.nentry.dragging {
+  opacity: 0.5;
+}

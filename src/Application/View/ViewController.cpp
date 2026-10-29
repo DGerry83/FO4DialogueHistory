@@ -53,6 +53,21 @@ namespace F4DH::Application
 		{
 			if (g_target) g_target->OnNoteSearchRequested(term);
 		}
+
+		void NoteFolderCreateThunk(std::uint64_t parentFolderId, const std::string& name)
+		{
+			if (g_target) g_target->OnNoteFolderCreate(parentFolderId, name);
+		}
+
+		void NoteMoveThunk(std::uint64_t entryId, std::uint64_t folderId)
+		{
+			if (g_target) g_target->OnNoteMove(entryId, folderId);
+		}
+
+		void NoteDeleteThunk(std::uint64_t entryId)
+		{
+			if (g_target) g_target->OnNoteDelete(entryId);
+		}
 	}
 
 	void ViewController::SetCloseTarget(ViewController* instance) noexcept
@@ -75,6 +90,9 @@ namespace F4DH::Application
 		_bridge.SetClearNotesCallback(&ClearNotesThunk);
 		_bridge.SetNoteBodyRequestCallback(&NoteBodyThunk);
 		_bridge.SetNoteSearchRequestCallback(&NoteSearchThunk);
+		_bridge.SetNoteFolderCreateCallback(&NoteFolderCreateThunk);
+		_bridge.SetNoteMoveCallback(&NoteMoveThunk);
+		_bridge.SetNoteDeleteCallback(&NoteDeleteThunk);
 	}
 
 	void ViewController::Toggle()
@@ -133,6 +151,27 @@ namespace F4DH::Application
 		PushNoteSnapshot();
 	}
 
+	void ViewController::OnNoteFolderCreate(std::uint64_t parentFolderId, const std::string& name)
+	{
+		const auto result = _noteStore.CreateFolder(parentFolderId, name);
+		_bridge.PushNoteOperationResult(Core::NotePayloadBuilder::BuildOperationResult(result));
+		PushNoteSnapshot();
+	}
+
+	void ViewController::OnNoteMove(std::uint64_t entryId, std::uint64_t folderId)
+	{
+		const auto result = _noteStore.AssignNote(entryId, folderId);
+		_bridge.PushNoteOperationResult(Core::NotePayloadBuilder::BuildOperationResult(result));
+		PushNoteSnapshot();
+	}
+
+	void ViewController::OnNoteDelete(std::uint64_t entryId)
+	{
+		const auto result = _noteStore.DeleteNote(entryId);
+		_bridge.PushNoteOperationResult(Core::NotePayloadBuilder::BuildOperationResult(result));
+		PushNoteSnapshot();
+	}
+
 	void ViewController::PushNoteSnapshot()
 	{
 		std::vector<Core::NoteListItem> items;
@@ -140,9 +179,9 @@ namespace F4DH::Application
 			const auto body = _noteBodySource.ResolveBody(record);
 			const bool hasBody = body.status == Core::NoteBodyResult::Status::Ready;
 			if (!Core::NoteSearch::Matches(record.title, hasBody ? body.body : std::string{}, _noteSearchTerm)) continue;
-			items.push_back({ record.identity.entryId, record.title, record.firstReadSequence });
+			items.push_back({ record.identity.entryId, record.title, record.firstReadSequence, record.folderId });
 		}
-		_bridge.PushNoteSnapshot(Core::NotePayloadBuilder::BuildList(items));
+		_bridge.PushNoteSnapshot(Core::NotePayloadBuilder::BuildTree(_noteStore.Folders(), items));
 	}
 
 	void ViewController::OnCloseRequested()

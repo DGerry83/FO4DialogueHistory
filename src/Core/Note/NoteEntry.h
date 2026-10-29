@@ -62,6 +62,21 @@ namespace F4DH::Core
 		std::string pluginName;
 	};
 
+	struct NoteFolder
+	{
+		std::uint64_t folderId{ 0 };
+		std::uint64_t parentFolderId{ 0 };
+		std::string name;
+		std::uint32_t ordinal{ 0 };
+	};
+
+	struct NoteOperation
+	{
+		bool ok{ false };
+		std::uint64_t id{ 0 };
+		std::string message;
+	};
+
 	struct NoteRecord
 	{
 		NoteIdentity identity{};
@@ -71,6 +86,7 @@ namespace F4DH::Core
 		NoteBodyMode bodyMode{ NoteBodyMode::ResolveStatic };
 		std::string cachedBody;
 		std::optional<EncounterMetadata> firstEncounter;
+		std::uint64_t folderId{ 0 };
 	};
 
 	struct NoteListItem
@@ -78,6 +94,7 @@ namespace F4DH::Core
 		std::uint64_t entryId{ 0 };
 		std::string title;
 		std::uint64_t firstReadSequence{ 0 };
+		std::uint64_t folderId{ 0 };
 	};
 
 	struct NoteBodyResult

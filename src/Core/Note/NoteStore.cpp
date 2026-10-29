@@ -1,6 +1,7 @@
 #include "NoteStore.h"
 
 #include "NoteTitleGenerator.h"
+#include "NoteFolderRules.h"
 
 #include <algorithm>
 
@@ -85,20 +86,107 @@ namespace F4DH::Core
 	{
 		const std::lock_guard lock(_mutex);
 		_records.clear();
-		_nextEntryId = 1;
-		_nextReadSequence = 1;
 	}
 
-	void NoteStore::ReplaceAll(std::vector<NoteRecord> a_records)
+	void NoteStore::ReplaceAll(std::vector<NoteRecord> a_records, std::vector<NoteFolder> a_folders)
 	{
 		const std::lock_guard lock(_mutex);
 		_records = std::move(a_records);
+		_folders = std::move(a_folders);
 		_nextEntryId = 1;
 		_nextReadSequence = 1;
+		_nextFolderId = 1;
 		for (const auto& record : _records) {
 			_nextEntryId = std::max(_nextEntryId, record.identity.entryId + 1);
 			_nextReadSequence = std::max(_nextReadSequence, record.firstReadSequence + 1);
 		}
+		for (const auto& folder : _folders) _nextFolderId = std::max(_nextFolderId, folder.folderId + 1);
+	}
+
+	NoteOperation NoteStore::CreateFolder(std::uint64_t a_parentFolderId, std::string a_name)
+	{
+		const std::lock_guard lock(_mutex);
+		const auto name = NoteFolderRules::NormalizeName(a_name);
+		if (name.empty()) return { false, 0, "Folder names must be 1-64 Unicode code points." };
+		if (_folders.size() >= 256) return { false, 0, "Folder limit reached (256)." };
+		if (a_parentFolderId != 0 && FindFolderLocked(a_parentFolderId) < 0) {
+			return { false, 0, "The parent folder does not exist." };
+		}
+		if (a_parentFolderId != 0 && FolderDepthLocked(a_parentFolderId) >= 3) {
+			return { false, 0, "Folders can be nested up to 3 levels deep." };
+		}
+		for (const auto& folder : _folders) {
+			if (folder.parentFolderId == a_parentFolderId && NoteFolderRules::SameName(folder.name, name)) {
+				return { false, 0, "A folder with that name already exists here." };
+			}
+		}
+
+		NoteFolder folder;
+		folder.folderId = _nextFolderId++;
+		folder.parentFolderId = a_parentFolderId;
+		folder.name = std::move(name);
+		folder.ordinal = 1;
+		for (const auto& other : _folders) {
+			if (other.parentFolderId == a_parentFolderId) ++folder.ordinal;
+		}
+		_folders.push_back(std::move(folder));
+		return { true, _folders.back().folderId, "Folder created." };
+	}
+
+	NoteOperation NoteStore::AssignNote(std::uint64_t a_entryId, std::uint64_t a_folderId)
+	{
+		const std::lock_guard lock(_mutex);
+		if (a_folderId != 0 && FindFolderLocked(a_folderId) < 0) return { false, 0, "The destination folder does not exist." };
+		const auto it = std::ranges::find_if(_records, [&](const NoteRecord& record) {
+			return record.identity.entryId == a_entryId && record.state == NoteState::Read;
+		});
+		if (it == _records.end()) return { false, 0, "The note no longer exists." };
+		it->folderId = a_folderId;
+		return { true, a_entryId, a_folderId == 0 ? "Note moved to Unfiled." : "Note moved." };
+	}
+
+	NoteOperation NoteStore::DeleteNote(std::uint64_t a_entryId)
+	{
+		const std::lock_guard lock(_mutex);
+		const auto it = std::ranges::find_if(_records, [&](const NoteRecord& record) {
+			return record.identity.entryId == a_entryId && record.state == NoteState::Read;
+		});
+		if (it == _records.end()) return { false, 0, "The note no longer exists." };
+		_records.erase(it);
+		return { true, a_entryId, "Note deleted." };
+	}
+
+	std::vector<NoteFolder> NoteStore::Folders() const
+	{
+		const std::lock_guard lock(_mutex);
+		return _folders;
+	}
+
+	std::optional<NoteFolder> NoteStore::FindFolder(std::uint64_t a_folderId) const
+	{
+		const std::lock_guard lock(_mutex);
+		const auto index = FindFolderLocked(a_folderId);
+		return index < 0 ? std::nullopt : std::optional<NoteFolder>(_folders[static_cast<std::size_t>(index)]);
+	}
+
+	std::int32_t NoteStore::FindFolderLocked(std::uint64_t a_folderId) const
+	{
+		for (std::size_t i = 0; i < _folders.size(); ++i) {
+			if (_folders[i].folderId == a_folderId) return static_cast<std::int32_t>(i);
+		}
+		return -1;
+	}
+
+	std::uint32_t NoteStore::FolderDepthLocked(std::uint64_t a_folderId) const
+	{
+		std::uint32_t depth = 0;
+		while (a_folderId != 0) {
+			const auto index = FindFolderLocked(a_folderId);
+			if (index < 0 || depth > 3) return 0;
+			++depth;
+			a_folderId = _folders[static_cast<std::size_t>(index)].parentFolderId;
+		}
+		return depth;
 	}
 
 	std::size_t NoteStore::Size() const

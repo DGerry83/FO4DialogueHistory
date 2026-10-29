@@ -20,6 +20,7 @@ namespace F4DH::Application
 		void AppendMessage(const std::string&) override {}
 		void PushNoteSnapshot(const std::string&) override {}
 		void PushNoteBody(const std::string&) override {}
+		void PushNoteOperationResult(const std::string&) override {}
 		void SetCloseCallback(CloseCallback) override {}
 		void SetClearCallbacks(ClearAllCallback, ClearQuestCallback) override {}
 		void SetClearQuestsCallback(ClearQuestsCallback) override {}
@@ -27,6 +28,9 @@ namespace F4DH::Application
 		void SetClearNotesCallback(ClearNotesCallback) override {}
 		void SetNoteBodyRequestCallback(NoteBodyRequestCallback) override {}
 		void SetNoteSearchRequestCallback(NoteSearchRequestCallback) override {}
+		void SetNoteFolderCreateCallback(NoteFolderCreateCallback) override {}
+		void SetNoteMoveCallback(NoteMoveCallback) override {}
+		void SetNoteDeleteCallback(NoteDeleteCallback) override {}
 		[[nodiscard]] bool IsHealthy() override { return false; }
 	};
 }

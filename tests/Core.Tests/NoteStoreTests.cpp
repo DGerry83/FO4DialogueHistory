@@ -107,7 +107,7 @@ TEST_CASE("note pre-owned post-install read uses the read as first encounter")
 	REQUIRE(store.Find(read.entryId)->firstEncounter->kind == EncounterKind::Read);
 }
 
-TEST_CASE("note clear removes pending and read records and resets sequences")
+TEST_CASE("note clear removes pending and read records without reusing sequences")
 {
 	NoteStore store;
 	(void)store.ObservePickup(Identity(0x2000), "Pending", Encounter(EncounterKind::Pickup));
@@ -116,8 +116,8 @@ TEST_CASE("note clear removes pending and read records and resets sequences")
 	REQUIRE(store.Size() == 0);
 	REQUIRE(store.VisibleSnapshot().empty());
 	const auto read = store.ObserveRead(Identity(), "Note", "body", NoteBodyMode::ResolveStatic, Encounter(EncounterKind::Read));
-	REQUIRE(read.entryId == 1);
-	REQUIRE(store.Find(1)->firstReadSequence == 1);
+	REQUIRE(read.entryId == 3);
+	REQUIRE(store.Find(3)->firstReadSequence == 2);
 }
 
 TEST_CASE("note replacement restores records and advances local sequences")

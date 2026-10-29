@@ -60,7 +60,12 @@
     <div id="notes">
       <div id="notebar">
         <input id="notesearch" type="text" placeholder="Search notes..." autocomplete="off">
+        <input id="newfoldername" type="text" placeholder="New folder name" autocomplete="off" maxlength="256">
+        <button id="notecreate" type="button" title="Create folder here">+ Folder</button>
+        <button id="notemove" type="button" title="Move selected note (X)">Move</button>
+        <button id="notedelete" type="button" title="Delete selected note">Delete</button>
       </div>
+      <div id="notenotice">Select a note or folder. X moves; B cancels.</div>
       <div id="notepanes">
         <div id="notelist" aria-label="Read notes"></div>
         <div id="notedetail">

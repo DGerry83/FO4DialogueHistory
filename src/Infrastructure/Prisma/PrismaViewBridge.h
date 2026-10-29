@@ -34,6 +34,7 @@ namespace F4DH::Infrastructure
 		void AppendMessage(const std::string& json) override;
 		void PushNoteSnapshot(const std::string& json) override;
 		void PushNoteBody(const std::string& json) override;
+		void PushNoteOperationResult(const std::string& json) override;
 		void SetCloseCallback(CloseCallback fn) override;
 		void SetClearCallbacks(ClearAllCallback allFn, ClearQuestCallback questFn) override;
 		void SetClearQuestsCallback(ClearQuestsCallback questsFn) override;
@@ -41,6 +42,9 @@ namespace F4DH::Infrastructure
 		void SetClearNotesCallback(ClearNotesCallback fn) override;
 		void SetNoteBodyRequestCallback(NoteBodyRequestCallback fn) override;
 		void SetNoteSearchRequestCallback(NoteSearchRequestCallback fn) override;
+		void SetNoteFolderCreateCallback(NoteFolderCreateCallback fn) override;
+		void SetNoteMoveCallback(NoteMoveCallback fn) override;
+		void SetNoteDeleteCallback(NoteDeleteCallback fn) override;
 		[[nodiscard]] bool IsHealthy() override;
 
 		// #005: the view reports a text input focused ("1") / blurred ("0")
@@ -131,6 +135,9 @@ namespace F4DH::Infrastructure
 		ClearNotesCallback                 _clearNotesCallback = nullptr;
 		NoteBodyRequestCallback            _noteBodyRequestCallback = nullptr;
 		NoteSearchRequestCallback          _noteSearchRequestCallback = nullptr;
+		NoteFolderCreateCallback           _noteFolderCreateCallback = nullptr;
+		NoteMoveCallback                   _noteMoveCallback = nullptr;
+		NoteDeleteCallback                 _noteDeleteCallback = nullptr;
 		TypingStateCallback                _typingStateCallback;
 		Core::ViewPreferences              _preferences;  // cached view preferences (16/false until seeded); pushed to the view ahead of each snapshot
 		bool                               _focused{ false };  // set by Focus(), cleared by Unfocus()/Hide(); gates the live pause-change refocus

@@ -35,6 +35,7 @@ add_executable(Core.Tests
 	NoteStoreTests.cpp
 	NoteSearchPayloadTests.cpp
 	NoteCosaveCodecTests.cpp
+	NoteFolderTests.cpp
 	${CMAKE_SOURCE_DIR}/src/Core/Dialogue/PayloadBuilder.cpp
 	${CMAKE_SOURCE_DIR}/src/Core/Dialogue/CosaveCodec.cpp
 	${CMAKE_SOURCE_DIR}/src/Core/Dialogue/StressTestDataGenerator.cpp

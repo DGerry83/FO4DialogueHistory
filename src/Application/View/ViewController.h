@@ -40,6 +40,9 @@ namespace F4DH::Application
 		void OnClearNotes();
 		void OnNoteBodyRequested(std::uint64_t entryId);
 		void OnNoteSearchRequested(const std::string& term);
+		void OnNoteFolderCreate(std::uint64_t parentFolderId, const std::string& name);
+		void OnNoteMove(std::uint64_t entryId, std::uint64_t folderId);
+		void OnNoteDelete(std::uint64_t entryId);
 
 		void NotifyBulkChange();
 

@@ -25,7 +25,7 @@ namespace
 	constexpr std::uint32_t kMessageRecordType = 'MSGS';
 	constexpr std::uint32_t kMessageRecordVersion = 1;
 	constexpr std::uint32_t kNoteRecordType = 'NOTE';
-	constexpr std::uint32_t kNoteRecordVersion = 1;
+	constexpr std::uint32_t kNoteRecordVersion = 2;
 
 	F4DH::Core::DialogueBuffer* g_buffer{ nullptr };
 	F4DH::Core::MessageBuffer*  g_messageBuffer{ nullptr };
@@ -47,7 +47,7 @@ namespace
 			a_ser->WriteRecord(kMessageRecordType, kMessageRecordVersion, std::span<const std::byte>(payload.data(), payload.size()));
 		}
 		if (g_noteStore) {
-			const auto payload = F4DH::Core::NoteCosaveCodec::Encode(g_noteStore->Snapshot());
+			const auto payload = F4DH::Core::NoteCosaveCodec::EncodeV2(g_noteStore->Snapshot(), g_noteStore->Folders());
 			a_ser->WriteRecord(kNoteRecordType, kNoteRecordVersion, std::span<const std::byte>(payload.data(), payload.size()));
 		}
 	}
@@ -67,7 +67,7 @@ namespace
 		while (a_ser->GetNextRecordInfo(type, version, size)) {
 			const bool isDialogue = type == kDialogueRecordType && (version == 1 || version == 2);
 			const bool isMessage = type == kMessageRecordType && version == kMessageRecordVersion;
-			const bool isNote = type == kNoteRecordType && version == kNoteRecordVersion;
+			const bool isNote = type == kNoteRecordType && (version == 1 || version == 2);
 			if (!isDialogue && !isMessage && !isNote) continue;
 			if ((isDialogue && !buffer) || (isMessage && !messageBuffer) || (isNote && !noteStore)) continue;
 
@@ -96,7 +96,8 @@ namespace
 				REX::LogInformation("cosave: restored {} message(s)", messages.size());
 			} else {
 				std::vector<F4DH::Core::NoteRecord> records;
-				if (!F4DH::Core::NoteCosaveCodec::Decode(payload, records, version)) {
+				std::vector<F4DH::Core::NoteFolder> folders;
+				if (!F4DH::Core::NoteCosaveCodec::Decode(payload, records, folders, version)) {
 					REX::LogError("cosave: malformed NOTE record ({} bytes) — note history stays cleared", size);
 					continue;
 				}
@@ -106,8 +107,8 @@ namespace
 						a_ser->ResolveFormID(record.identity.sourceRefFormID).value_or(0) : 0;
 					record.identity.runtimeUniqueID = 0;
 				}
-				noteStore->ReplaceAll(std::move(records));
-				REX::LogInformation("cosave: restored {} note record(s)", noteStore->Size());
+				noteStore->ReplaceAll(std::move(records), std::move(folders));
+				REX::LogInformation("cosave: restored {} note record(s) and {} folder(s)", noteStore->Size(), noteStore->Folders().size());
 			}
 		}
 	}
@@ -131,7 +132,7 @@ namespace F4DH::Infrastructure
 		ser->SetSaveCallback(SaveCallback);
 		ser->SetLoadCallback(LoadCallback);
 		ser->SetRevertCallback(RevertCallback);
-		REX::LogInformation("cosave: persistence registered (unique ID 'DLGH', records 'HIST' v2 [loads v1+v2] + 'MSGS' v1 + 'NOTE' v1)");
+		REX::LogInformation("cosave: persistence registered (unique ID 'DLGH', records 'HIST' v2 [loads v1+v2] + 'MSGS' v1 + 'NOTE' v2 [loads v1+v2])");
 	}
 
 	void CosaveStore::Bind(Core::DialogueBuffer* a_buffer, Core::MessageBuffer* a_messageBuffer, Core::NoteStore* a_noteStore)
