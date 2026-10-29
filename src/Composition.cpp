@@ -16,6 +16,7 @@
 #include "Infrastructure/Cosave/CosaveStore.h"
 #include "Infrastructure/Hooks/HudMessageSink.h"
 #include "Infrastructure/Hooks/NoteEventSink.h"
+#include "Infrastructure/Hooks/BookMenuTextHook.h"
 #include "Infrastructure/Hooks/SubtitleHook.h"
 #include "Infrastructure/Input/GameplayInputGate.h"
 #include "Infrastructure/Logging/Log.h"
@@ -436,6 +437,13 @@ namespace F4DH
 		// exists at this milestone and every other channel keeps working.
 		if (!Infrastructure::NoteEventSink::Install(root.log, root.settings.verboseCapture)) {
 			root.log.Error("note probe sink unavailable — note runtime prototype disabled (everything else unaffected)");
+		}
+
+		// Note History M1 follow-up (NEXT_PROBE_CONTRACT): OG-only
+		// BookMenu::PrepareBookText detour capturing prepared display text.
+		// On NG/AE this logs as disabled and installs nothing.
+		if (!Infrastructure::BookMenuTextHook::Install(root.log, root.settings.verboseCapture)) {
+			root.log.Error("note probe: BookMenu text hook unavailable — prepared-text probe disabled (everything else unaffected)");
 		}
 
 		// M3: hand the buffers to the cosave store (registered at plugin load).

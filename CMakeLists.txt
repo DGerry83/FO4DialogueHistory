@@ -52,6 +52,7 @@ add_library(${PROJECT_NAME} SHARED
 	src/Infrastructure/Hooks/QuestResolver.cpp
 	src/Infrastructure/Hooks/HudMessageSink.cpp
 	src/Infrastructure/Hooks/NoteEventSink.cpp
+	src/Infrastructure/Hooks/BookMenuTextHook.cpp
 	src/Infrastructure/Notes/NoteRecordResolver.cpp
 	src/Infrastructure/Input/GameplayInputGate.cpp
 	src/Infrastructure/Cosave/CosaveStore.cpp

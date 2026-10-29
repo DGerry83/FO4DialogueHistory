@@ -140,6 +140,37 @@ namespace
 		return out;
 	}
 
+	// NEXT_PROBE_CONTRACT magazine probe: teaching flags (kAddPerk/kAddSpell/
+	// kAdvancesActorValue — never CantBeTaken/HasBeenRead) plus the
+	// PerkMagKeyword runtime form ID scanned over the FULL keyword array
+	// (the compact identity log still shows at most six). Text state is
+	// never an input: an empty body is not a classification signal.
+	constexpr std::uint32_t kPerkMagKeywordID = 0x001D4A70;
+
+	std::string ClassifyBookVerdict(const RE::TESObjectBOOK& a_book)
+	{
+		const auto flags = a_book.data.flags.underlying();
+		const bool teaches =
+			(flags & static_cast<std::uint8_t>(RE::OBJ_BOOK::Flags::kAddPerk)) != 0 ||
+			(flags & static_cast<std::uint8_t>(RE::OBJ_BOOK::Flags::kAddSpell)) != 0 ||
+			(flags & static_cast<std::uint8_t>(RE::OBJ_BOOK::Flags::kAdvancesActorValue)) != 0;
+
+		bool perkMag = false;
+		const std::uint32_t keywordCount = a_book.numKeywords;
+		for (std::uint32_t i = 0; i < keywordCount; ++i) {
+			const RE::BGSKeyword* keyword = a_book.keywords[i];
+			if (keyword && keyword->formID == kPerkMagKeywordID) {
+				perkMag = true;
+				break;
+			}
+		}
+
+		if (teaches && perkMag) return "reject:both";
+		if (teaches) return "reject:teaching";
+		if (perkMag) return "reject:perkmag";
+		return "accept";
+	}
+
 	std::string DescribeBookIdentity(const RE::TESObjectBOOK& a_book)
 	{
 		const RE::TESForm& form = a_book;
@@ -164,12 +195,13 @@ namespace
 		keywords += ']';
 
 		const auto flags = a_book.data.flags.underlying();
-		return std::format("editorID='{}' name='{}' plugin={} localId=0x{:06X} flags=[{}] keywords={} model='{}'",
+		return std::format("editorID='{}' name='{}' plugin={} localId=0x{:06X} flags=[{}] verdict={} keywords={} model='{}'",
 			Safe(form.GetFormEditorID()),
 			Safe(a_book.GetFullName()),
 			plugin,
 			form.GetLocalFormID(),
 			DecodeBookFlags(flags),
+			ClassifyBookVerdict(a_book),
 			keywords,
 			Safe(model));
 	}
@@ -221,15 +253,16 @@ namespace
 		return { "Unknown location", "unknown" };
 	}
 
-	// D1 record-once: script metadata (e.g. CA_SkillMagazineScript) has no
-	// accessor in the AV fork headers — this is the exact blocker for the G3
-	// magazine-marker leg, logged in-band so every probe log carries it.
-	void LogScriptMetadataBlockerOnce(F4DH::Core::ILogger& a_log)
+	// Record-once classifier notice (NEXT_PROBE_CONTRACT): teaching flags plus
+	// the PerkMagKeyword runtime marker are the active magazine classifier;
+	// VMAD/native-script metadata is not required. Replaces the earlier
+	// script-metadata BLOCKED warning once the keyword classifier landed.
+	void LogClassifierActiveOnce(F4DH::Core::ILogger& a_log)
 	{
 		static bool logged = false;
 		if (!logged) {
 			logged = true;
-			a_log.Warn("note probe: script-metadata probe BLOCKED — AV fork exposes no VMAD/native-script accessor on TESForm/TESObjectBOOK (searched: BGSVMAD/VirtualMachineAdapter/GetVirtualMachineAdapter); magazine script markers (CA_SkillMagazineScript) unreachable natively — see session PROGRESS_LOG D1");
+			a_log.Info("note probe: magazine classifier active — teaching flags (kAddPerk|kAddSpell|kAdvancesActorValue) + PerkMagKeyword (0x001D4A70) over the full keyword array; VMAD/native-script metadata not required");
 		}
 	}
 
@@ -253,7 +286,7 @@ namespace F4DH::Infrastructure::Notes
 	void NoteRecordResolver::LogReadObservation(const ReadObservation& a_obs, Core::ILogger& a_log)
 	{
 		LogFirstTaskThreadOnce(a_log);
-		LogScriptMetadataBlockerOnce(a_log);
+		LogClassifierActiveOnce(a_log);
 
 		a_log.Info(std::format("note probe [seq {}]: READ base=0x{:08X} ref={} unique={} fromThread={}",
 			a_obs.seq,
@@ -429,5 +462,77 @@ namespace F4DH::Infrastructure::Notes
 			a_log.Info(std::format("note probe [seq {}]: context gameTime={} location='{}' via={} (first-encounter metadata probe)",
 				a_obs.seq, FormatGameTime(), location, locationVia));
 		}
+	}
+
+	void NoteRecordResolver::LogPreparedBookText(PreparedTextObservation a_obs, Core::ILogger& a_log)
+	{
+		LogFirstTaskThreadOnce(a_log);
+		LogClassifierActiveOnce(a_log);
+
+		a_log.Info(std::format("note probe [bookText {}]: PREPARED book=0x{:08X} ref=0x{:08X} len={} copied={} truncated={} textState={} fromThread={}",
+			a_obs.seq,
+			a_obs.bookFormID,
+			a_obs.refFormID,
+			a_obs.finalLength,
+			a_obs.body.size(),
+			a_obs.truncated ? 1 : 0,
+			a_obs.body.empty() ? "empty" : "present",
+			a_obs.fromThreadId));
+
+		// Identity: prefer the target-book slot, fall back to the reference
+		// base — the same no-silent-merge discipline as the read probe.
+		const RE::TESForm* form = a_obs.bookFormID != 0 ? RE::TESForm::FindFormByID(a_obs.bookFormID) : nullptr;
+		const RE::TESObjectBOOK* book = (form && form->Is(RE::FormType::kBook)) ? static_cast<const RE::TESObjectBOOK*>(form) : nullptr;
+		const char* source = book ? "slot" : "none";
+
+		const RE::TESObjectREFR* refr = nullptr;
+		if (!book && a_obs.refFormID != 0) {
+			if (const RE::TESForm* refForm = RE::TESForm::FindFormByID(a_obs.refFormID)) {
+				refr = refForm->As<RE::TESObjectREFR>();
+			}
+			if (!refr && (a_obs.refFormID & 0xFF000000u) == 0xFF000000u) {
+				if (const RE::TESForm* refForm = RE::TESForm::FindFormByNumericID(a_obs.refFormID)) {
+					refr = refForm->As<RE::TESObjectREFR>();
+				}
+			}
+			if (refr) {
+				if (const RE::TESForm* base = refr->GetBaseObject(); base && base->Is(RE::FormType::kBook)) {
+					book = static_cast<const RE::TESObjectBOOK*>(base);
+					source = "refBase";
+				}
+			}
+		} else if (book && a_obs.refFormID != 0) {
+			if (const RE::TESForm* refForm = RE::TESForm::FindFormByID(a_obs.refFormID)) {
+				refr = refForm->As<RE::TESObjectREFR>();
+			}
+			if (!refr && (a_obs.refFormID & 0xFF000000u) == 0xFF000000u) {
+				if (const RE::TESForm* refForm = RE::TESForm::FindFormByNumericID(a_obs.refFormID)) {
+					refr = refForm->As<RE::TESObjectREFR>();
+				}
+			}
+		}
+
+		a_log.Info(std::format("note probe [bookText {}]: identity selected={} source={}",
+			a_obs.seq, book ? std::format("0x{:08X}", book->formID) : std::string("<none>"), source));
+
+		if (book) {
+			a_log.Info(std::format("note probe [bookText {}]: base: {}", a_obs.seq, DescribeBookIdentity(*book)));
+		} else {
+			a_log.Warn(std::format("note probe [bookText {}]: neither slot book nor reference base resolved to a book — identity unproven",
+				a_obs.seq));
+		}
+
+		if (refr) {
+			const auto refDisplay = RE::TESFullName::GetFormFullOrDisplayName(refr);
+			a_log.Info(std::format("note probe [bookText {}]: bookRef editorID='{}' displayName='{}'",
+				a_obs.seq, Safe(refr->GetFormEditorID()), refDisplay ? Safe(refDisplay->data()) : std::string("<none>")));
+		}
+
+		a_log.Info(std::format("note probe [bookText {}]: body prepared len={} \"{}\"",
+			a_obs.seq, a_obs.body.size(), EscapeForLog(a_obs.body)));
+
+		const auto [location, locationVia] = FormatPlayerLocation(a_log);
+		a_log.Info(std::format("note probe [bookText {}]: context gameTime={} location='{}' via={}",
+			a_obs.seq, FormatGameTime(), location, locationVia));
 	}
 }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 
 namespace F4DH::Core
 {
@@ -34,6 +35,20 @@ namespace F4DH::Infrastructure::Notes
 		std::uint16_t uniqueID;
 	};
 
+	// Value-only payload from the OG BookMenu::PrepareBookText detour
+	// (BookMenuTextHook). The prepared body was copied on the hook path under
+	// a 64 KiB cap (truncated records it); every field here is plain data.
+	struct PreparedTextObservation
+	{
+		std::uint64_t              seq;          // independent bookText sequence
+		std::uint32_t              fromThreadId; // thread that ran the thunk
+		std::uint32_t              bookFormID;   // target-book slot raw formID (0 = null/unreadable)
+		std::uint32_t              refFormID;    // target-reference slot raw formID (0 = null/unreadable)
+		std::uint64_t              finalLength;  // NUL-terminated length over the bounded span
+		bool                       truncated;    // finalLength exceeded the 64 KiB copy cap
+		std::string                body;         // <= 64 KiB, control characters escaped at log time
+	};
+
 	// M1 game-thread probes. Every function here runs exclusively on the game
 	// thread (dispatched by NoteEventSink through the F4SE task interface) and
 	// performs all engine access: form resolution, magazine-marker probes
@@ -47,5 +62,6 @@ namespace F4DH::Infrastructure::Notes
 	{
 		void LogReadObservation(const ReadObservation& a_obs, Core::ILogger& a_log);
 		void LogTransferObservation(const TransferObservation& a_obs, Core::ILogger& a_log);
+		void LogPreparedBookText(PreparedTextObservation a_obs, Core::ILogger& a_log);
 	}
 }
