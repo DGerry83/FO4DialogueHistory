@@ -6,6 +6,7 @@
 
 #include "Application/Capture/CapturePipeline.h"
 #include "Application/Capture/MessageCapturePipeline.h"
+#include "Application/Capture/NoteCapturePipeline.h"
 #include "Application/Input/HotkeyController.h"
 #include "Application/Settings/Settings.h"
 #include "Application/StressTest/StressTestInjector.h"
@@ -13,7 +14,9 @@
 #include "Core/Dialogue/DialogueBuffer.h"
 #include "Core/Input/GamepadButtonMap.h"
 #include "Core/Message/MessageBuffer.h"
+#include "Core/Note/NoteStore.h"
 #include "Infrastructure/Cosave/CosaveStore.h"
+#include "Infrastructure/Notes/NoteRecordResolver.h"
 #include "Infrastructure/Hooks/HudMessageSink.h"
 #include "Infrastructure/Hooks/NoteEventSink.h"
 #include "Infrastructure/Hooks/BookMenuTextHook.h"
@@ -346,11 +349,15 @@ namespace F4DH
 
 		static Core::DialogueBuffer                buffer{ root.settings.bufferSize };
 		static Core::MessageBuffer                 messageBuffer{ root.settings.messageBufferSize };
+		static Core::NoteStore                     noteStore;
+		static Infrastructure::Notes::NoteRecordResolver::BodySource noteBodySource;
 		static Infrastructure::PrismaViewBridge    bridge;
-		static Application::ViewController         viewController(buffer, messageBuffer, bridge, root.log);
+		static Application::ViewController         viewController(buffer, messageBuffer, noteStore, noteBodySource, bridge, root.log);
 		static Application::CapturePipeline        pipeline(buffer, viewController, root.log, root.settings.verboseCapture);
 		static Application::MessageCapturePipeline messagePipeline(messageBuffer, viewController, root.log, root.settings.verboseCapture, root.settings.messageExcludedPrefixes);
+		static Application::NoteCapturePipeline    notePipeline(noteStore, viewController, root.log, root.settings.verboseCapture);
 		static Application::StressTestInjector     stressInjector(buffer, viewController, root.log, root.settings);
+		noteStore.SetGenericTitles(root.settings.noteGenericTitles);
 		static Application::HotkeyController       hotkey(root.settings, viewController, stressInjector);
 
 		// #005 C2: gameplay-input gate — the C1 MenuControls swallow cannot
@@ -432,23 +439,15 @@ namespace F4DH
 			root.log.Error("HUD message sink unavailable — message history disabled (dialogue history unaffected)");
 		}
 
-		// Note History M1 diagnostic prototype (v1.4.0): logging-only book-read
-		// and container-changed probes. Degraded, never fatal — no note state
-		// exists at this milestone and every other channel keeps working.
-		if (!Infrastructure::NoteEventSink::Install(root.log, root.settings.verboseCapture)) {
-			root.log.Error("note probe sink unavailable — note runtime prototype disabled (everything else unaffected)");
+		if (!Infrastructure::NoteEventSink::Install(root.log, root.settings.verboseCapture, &notePipeline)) {
+			root.log.Error("note event sink unavailable — note pickup capture disabled (everything else unaffected)");
 		}
 
-		// Note History M1 follow-up (NEXT_PROBE_CONTRACT): OG-only
-		// BookMenu::PrepareBookText detour capturing prepared display text.
-		// On NG/AE this logs as disabled and installs nothing.
-		if (!Infrastructure::BookMenuTextHook::Install(root.log, root.settings.verboseCapture)) {
-			root.log.Error("note probe: BookMenu text hook unavailable — prepared-text probe disabled (everything else unaffected)");
+		if (!Infrastructure::BookMenuTextHook::Install(root.log, root.settings.verboseCapture, &notePipeline)) {
+			root.log.Error("note probe: BookMenu text hook unavailable — prepared-text capture disabled (everything else unaffected)");
 		}
 
-		// M3: hand the buffers to the cosave store (registered at plugin load).
-		// The serialization callbacks run on the game thread, same as capture.
-		Infrastructure::CosaveStore::Bind(&buffer, &messageBuffer);
+		Infrastructure::CosaveStore::Bind(&buffer, &messageBuffer, &noteStore);
 
 		root.graphReady = true;
 		root.log.Info("data-loaded initialization complete (object graph built, subtitle hook installed, message sink active)");

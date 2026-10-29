@@ -19,12 +19,12 @@
       <span id="hint">Esc to close</span>
     </span>
   </div>
-  <!-- v1.3.0: two tabs, one panel. The strip is always visible; the mode
-       class on #panel shows exactly one body pane (hidden dialogue controls
-       are unreachable by mouse and by the focus model). -->
+  <!-- Three tabs, one panel. The mode class shows exactly one body pane;
+       hidden controls are unreachable by mouse and by the focus model. -->
   <div id="tabstrip">
     <button id="tabdialogue" class="active" type="button" title="Show dialogue history">Dialogue History</button>
     <button id="tabmessage" type="button" title="Show message history">Message History</button>
+    <button id="tabnote" type="button" title="Show note history">Note History</button>
   </div>
   <div id="body">
     <div id="index">
@@ -56,6 +56,19 @@
       </div>
       <div id="msgempty">No messages recorded yet.</div>
       <div id="msglog"></div>
+    </div>
+    <div id="notes">
+      <div id="notebar">
+        <input id="notesearch" type="text" placeholder="Search notes..." autocomplete="off">
+      </div>
+      <div id="notepanes">
+        <div id="notelist" aria-label="Read notes"></div>
+        <div id="notedetail">
+          <div id="notemeta">Select a note to read.</div>
+          <div id="notebody"></div>
+        </div>
+      </div>
+      <div id="noteempty">No notes read yet.</div>
     </div>
   </div>
   <div id="overlay" hidden>

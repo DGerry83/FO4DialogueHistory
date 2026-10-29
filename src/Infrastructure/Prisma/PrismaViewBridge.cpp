@@ -41,10 +41,14 @@ namespace F4DH::Infrastructure
 		PrismaViewBridge::ClearAllCallback   g_clearAllCallback{ nullptr };
 		PrismaViewBridge::ClearQuestCallback g_clearQuestCallback{ nullptr };
 		PrismaViewBridge::ClearQuestsCallback g_clearQuestsCallback{ nullptr };
-		PrismaViewBridge::ClearMessagesCallback g_clearMessagesCallback{ nullptr };  // message-history clear request
-		PrismaViewBridge::TypingStateCallback g_typingStateCallback;  // #005 mirror
+		PrismaViewBridge::ClearMessagesCallback g_clearMessagesCallback{ nullptr };
+		PrismaViewBridge::ClearNotesCallback g_clearNotesCallback{ nullptr };
+		PrismaViewBridge::NoteBodyRequestCallback g_noteBodyRequestCallback{ nullptr };
+		PrismaViewBridge::NoteSearchRequestCallback g_noteSearchRequestCallback{ nullptr };
+		PrismaViewBridge::TypingStateCallback g_typingStateCallback;
 		std::string                      g_snapshotCache;
-		std::string                      g_messageSnapshotCache;  // independent message-history replay cache
+		std::string                      g_messageSnapshotCache;
+		std::string                      g_noteSnapshotCache;
 		bool                             g_prismaMissingLogged{ false };
 		bool                             g_createResultLogged{ false };
 		// Set by Focus(), cleared by Unfocus()/Hide(); applied in OnDomReady
@@ -119,6 +123,35 @@ namespace F4DH::Infrastructure
 				if (g_clearMessagesCallback) {
 					g_clearMessagesCallback();
 				}
+			});
+		}
+
+		void OnClearNotesRequested(const char*)
+		{
+			Dispatch([] {
+				if (g_clearNotesCallback) g_clearNotesCallback();
+			});
+		}
+
+		void OnNoteBodyRequested(const char* a_payload)
+		{
+			const std::string payload = a_payload ? a_payload : "";
+			std::uint64_t id = 0;
+			const auto parsed = std::from_chars(payload.data(), payload.data() + payload.size(), id);
+			if (parsed.ec != std::errc() || parsed.ptr != payload.data() + payload.size() || id == 0) {
+				REX::LogWarning("PrismaViewBridge: ignoring malformed noteBodyRequested payload '{}'", payload);
+				return;
+			}
+			Dispatch([id] {
+				if (g_noteBodyRequestCallback) g_noteBodyRequestCallback(id);
+			});
+		}
+
+		void OnNoteSearchRequested(const char* a_payload)
+		{
+			const std::string term = a_payload ? a_payload : "";
+			Dispatch([term] {
+				if (g_noteSearchRequestCallback) g_noteSearchRequestCallback(term);
 			});
 		}
 
@@ -283,8 +316,11 @@ namespace F4DH::Infrastructure
 			g_api->RegisterJSListener(a_view, "clearAllRequested", &OnClearAllRequested);
 			g_api->RegisterJSListener(a_view, "clearQuestRequested", &OnClearQuestRequested);
 			g_api->RegisterJSListener(a_view, "clearQuestsRequested", &OnClearQuestsRequested);
-			g_api->RegisterJSListener(a_view, "clearMessagesRequested", &OnClearMessagesRequested);  // message-history clear (confirmed)
-			g_api->RegisterJSListener(a_view, "typingStateChanged", &OnTypingStateChanged);  // #005: text-input focus/blur reports
+			g_api->RegisterJSListener(a_view, "clearMessagesRequested", &OnClearMessagesRequested);
+			g_api->RegisterJSListener(a_view, "clearNotesRequested", &OnClearNotesRequested);
+			g_api->RegisterJSListener(a_view, "noteBodyRequested", &OnNoteBodyRequested);
+			g_api->RegisterJSListener(a_view, "noteSearchRequested", &OnNoteSearchRequested);
+			g_api->RegisterJSListener(a_view, "typingStateChanged", &OnTypingStateChanged);
 			g_api->RegisterJSListener(a_view, "viewPreferencesChanged", &OnViewPreferencesChanged);  // font slider / numeric / pause checkbox commits
 			// C7: V12 controller actions (gamepad). Bound only when the runtime
 			// exposed IVPrismaUI12 — on the V11 fallback g_api is a downcast and
@@ -336,6 +372,9 @@ namespace F4DH::Infrastructure
 			// recreation).
 			if (g_bridge && !g_messageSnapshotCache.empty()) {
 				g_bridge->PushMessageSnapshot(g_messageSnapshotCache);
+			}
+			if (g_bridge && !g_noteSnapshotCache.empty()) {
+				g_bridge->PushNoteSnapshot(g_noteSnapshotCache);
 			}
 			// Same first-open race for geometry: an empty snapshot cache skips
 			// the PushSnapshot path above, so apply it here too.
@@ -555,6 +594,31 @@ namespace F4DH::Infrastructure
 		}
 	}
 
+	void PrismaViewBridge::PushNoteSnapshot(const std::string& json)
+	{
+		if (!_api) return;
+		if (!_api->IsGameThread()) {
+			Dispatch([this, json] { PushNoteSnapshot(json); });
+			return;
+		}
+		g_noteSnapshotCache = json;
+		if (_view != 0 && IsHealthy()) {
+			_api->InteropCall(_view, "setNoteHistory", json.c_str());
+		}
+	}
+
+	void PrismaViewBridge::PushNoteBody(const std::string& json)
+	{
+		if (!_api || _view == 0) return;
+		if (!_api->IsGameThread()) {
+			Dispatch([this, json] { PushNoteBody(json); });
+			return;
+		}
+		if (IsHealthy()) {
+			_api->InteropCall(_view, "setNoteBody", json.c_str());
+		}
+	}
+
 	void PrismaViewBridge::SetCloseCallback(CloseCallback fn)
 	{
 		_closeCallback = fn;
@@ -579,6 +643,24 @@ namespace F4DH::Infrastructure
 	{
 		_clearMessagesCallback = fn;
 		g_clearMessagesCallback = fn;
+	}
+
+	void PrismaViewBridge::SetClearNotesCallback(ClearNotesCallback fn)
+	{
+		_clearNotesCallback = fn;
+		g_clearNotesCallback = fn;
+	}
+
+	void PrismaViewBridge::SetNoteBodyRequestCallback(NoteBodyRequestCallback fn)
+	{
+		_noteBodyRequestCallback = fn;
+		g_noteBodyRequestCallback = fn;
+	}
+
+	void PrismaViewBridge::SetNoteSearchRequestCallback(NoteSearchRequestCallback fn)
+	{
+		_noteSearchRequestCallback = fn;
+		g_noteSearchRequestCallback = fn;
 	}
 
 	void PrismaViewBridge::SetTypingStateCallback(TypingStateCallback fn)

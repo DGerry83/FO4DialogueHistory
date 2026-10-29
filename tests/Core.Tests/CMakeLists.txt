@@ -31,11 +31,21 @@ add_executable(Core.Tests
 	ScanCodeMapTests.cpp
 	GamepadButtonMapTests.cpp
 	ViewPreferencesTests.cpp
+	NoteTextTitleTests.cpp
+	NoteStoreTests.cpp
+	NoteSearchPayloadTests.cpp
+	NoteCosaveCodecTests.cpp
 	${CMAKE_SOURCE_DIR}/src/Core/Dialogue/PayloadBuilder.cpp
 	${CMAKE_SOURCE_DIR}/src/Core/Dialogue/CosaveCodec.cpp
 	${CMAKE_SOURCE_DIR}/src/Core/Dialogue/StressTestDataGenerator.cpp
 	${CMAKE_SOURCE_DIR}/src/Core/Message/MessagePayloadBuilder.cpp
 	${CMAKE_SOURCE_DIR}/src/Core/Message/MessageCosaveCodec.cpp
+	${CMAKE_SOURCE_DIR}/src/Core/Note/NoteTextFormatter.cpp
+	${CMAKE_SOURCE_DIR}/src/Core/Note/NoteTitleGenerator.cpp
+	${CMAKE_SOURCE_DIR}/src/Core/Note/NoteStore.cpp
+	${CMAKE_SOURCE_DIR}/src/Core/Note/NoteSearch.cpp
+	${CMAKE_SOURCE_DIR}/src/Core/Note/NotePayloadBuilder.cpp
+	${CMAKE_SOURCE_DIR}/src/Core/Note/NoteCosaveCodec.cpp
 	${CMAKE_SOURCE_DIR}/src/Core/Geometry/PanelGeometry.cpp
 	${CMAKE_SOURCE_DIR}/src/Core/Settings/ViewFilterState.cpp
 	${CMAKE_SOURCE_DIR}/src/Core/Settings/ViewPreferences.cpp

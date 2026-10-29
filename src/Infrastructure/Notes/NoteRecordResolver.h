@@ -1,7 +1,11 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <string>
+
+#include "Application/Capture/INoteSink.h"
+#include "Application/View/INoteBodySource.h"
 
 namespace F4DH::Core
 {
@@ -49,19 +53,22 @@ namespace F4DH::Infrastructure::Notes
 		std::string                body;         // <= 64 KiB, control characters escaped at log time
 	};
 
-	// M1 game-thread probes. Every function here runs exclusively on the game
-	// thread (dispatched by NoteEventSink through the F4SE task interface) and
-	// performs all engine access: form resolution, magazine-marker probes
-	// (OBJ_BOOK flags / keywords / model / script-metadata availability),
-	// both TESDescription candidates (inherited and item-card; the static
-	// form-description route and the reference-parent route are permanently
-	// disabled — OG freeze evidence, 2026-10-28_Bug_NoteReadFreeze), and
-	// Calendar/player location capture. Logging-only; no state is retained
-	// between calls.
+	// Game-thread native resolution. Value-returning paths feed Application
+	// capture; logging paths remain available for diagnostics. Static form and
+	// reference-parent description routes stay disabled.
 	namespace NoteRecordResolver
 	{
 		void LogReadObservation(const ReadObservation& a_obs, Core::ILogger& a_log);
 		void LogTransferObservation(const TransferObservation& a_obs, Core::ILogger& a_log);
 		void LogPreparedBookText(PreparedTextObservation a_obs, Core::ILogger& a_log);
+
+		[[nodiscard]] std::optional<Application::NotePickupEvent> ResolveTransferObservation(const TransferObservation& a_obs, Core::ILogger& a_log);
+		[[nodiscard]] std::optional<Application::NoteReadEvent> ResolvePreparedText(const PreparedTextObservation& a_obs, Core::ILogger& a_log);
+
+		class BodySource final : public Application::INoteBodySource
+		{
+		public:
+			[[nodiscard]] Core::NoteBodyResult ResolveBody(const Core::NoteRecord& record) override;
+		};
 	}
 }

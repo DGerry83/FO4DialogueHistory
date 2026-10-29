@@ -6,6 +6,8 @@
 #include "Core/Dialogue/DialogueBuffer.h"
 #include "Core/Message/MessageBuffer.h"
 #include "Core/Message/MessageCosaveCodec.h"
+#include "Core/Note/NoteCosaveCodec.h"
+#include "Core/Note/NoteStore.h"
 
 #include "F4SE/API.hpp"
 #include "F4SE/SerializationInterface.hpp"
@@ -21,10 +23,13 @@ namespace
 	constexpr std::uint32_t kDialogueRecordType = 'HIST';
 	constexpr std::uint32_t kDialogueRecordVersion = 2;  // v2 = +questType per line; loader also accepts v1
 	constexpr std::uint32_t kMessageRecordType = 'MSGS';
-	constexpr std::uint32_t kMessageRecordVersion = 1;   // v1 = count + length-bounded UTF-8 strings
+	constexpr std::uint32_t kMessageRecordVersion = 1;
+	constexpr std::uint32_t kNoteRecordType = 'NOTE';
+	constexpr std::uint32_t kNoteRecordVersion = 1;
 
-	F4DH::Core::DialogueBuffer* g_buffer{ nullptr };         // bound at game-data-ready
-	F4DH::Core::MessageBuffer*  g_messageBuffer{ nullptr };  // bound at game-data-ready
+	F4DH::Core::DialogueBuffer* g_buffer{ nullptr };
+	F4DH::Core::MessageBuffer*  g_messageBuffer{ nullptr };
+	F4DH::Core::NoteStore*      g_noteStore{ nullptr };
 
 	void SaveCallback(const F4SE::SerializationInterface* a_ser)
 	{
@@ -41,21 +46,20 @@ namespace
 			const auto payload = F4DH::Core::MessageCosaveCodec::Encode(g_messageBuffer->Snapshot());
 			a_ser->WriteRecord(kMessageRecordType, kMessageRecordVersion, std::span<const std::byte>(payload.data(), payload.size()));
 		}
+		if (g_noteStore) {
+			const auto payload = F4DH::Core::NoteCosaveCodec::Encode(g_noteStore->Snapshot());
+			a_ser->WriteRecord(kNoteRecordType, kNoteRecordVersion, std::span<const std::byte>(payload.data(), payload.size()));
+		}
 	}
 
 	void LoadCallback(const F4SE::SerializationInterface* a_ser)
 	{
-		// Load replaces: both buffers are cleared up front and rebuilt only
-		// from their own recognized record. A pre-1.3.0 save has no MSGS
-		// record — the message buffer simply stays empty.
 		auto* buffer = g_buffer;
 		auto* messageBuffer = g_messageBuffer;
-		if (buffer) {
-			buffer->Clear();
-		}
-		if (messageBuffer) {
-			messageBuffer->Clear();
-		}
+		auto* noteStore = g_noteStore;
+		if (buffer) buffer->Clear();
+		if (messageBuffer) messageBuffer->Clear();
+		if (noteStore) noteStore->Clear();
 
 		std::uint32_t type = 0;
 		std::uint32_t version = 0;
@@ -63,41 +67,47 @@ namespace
 		while (a_ser->GetNextRecordInfo(type, version, size)) {
 			const bool isDialogue = type == kDialogueRecordType && (version == 1 || version == 2);
 			const bool isMessage = type == kMessageRecordType && version == kMessageRecordVersion;
-			if (!isDialogue && !isMessage) {
-				continue;  // unknown record/version — skip without reading; no abort
-			}
-			if ((isDialogue && !buffer) || (isMessage && !messageBuffer)) {
-				continue;  // graph not built yet — discard the record unread
-			}
+			const bool isNote = type == kNoteRecordType && version == kNoteRecordVersion;
+			if (!isDialogue && !isMessage && !isNote) continue;
+			if ((isDialogue && !buffer) || (isMessage && !messageBuffer) || (isNote && !noteStore)) continue;
 
-			// Read EXACTLY the record size — a short read hard-aborts
-			// (REX::Fail) inside F4SE, so the size math here must be exact.
 			std::vector<std::byte> payload(size);
 			if (a_ser->ReadRecordData(payload.data(), size) != size) {
-				REX::LogError("cosave: short read on {} record ({} bytes) — history load aborted", isDialogue ? "HIST" : "MSGS", size);
-				return;  // catastrophic stream failure — nothing sane remains to read
+				REX::LogError("cosave: short read on {} record ({} bytes) — history load aborted",
+					isDialogue ? "HIST" : isMessage ? "MSGS" : "NOTE", size);
+				return;
 			}
 
 			if (isDialogue) {
 				std::vector<F4DH::Core::DialogueLine> lines;
 				if (!F4DH::Core::CosaveCodec::Decode(payload, lines, version)) {
 					REX::LogError("cosave: malformed HIST record ({} bytes) — dialogue history stays cleared", size);
-					continue;  // fail closed for dialogue only; keep scanning (MSGS may still be valid)
+					continue;
 				}
-				for (auto& line : lines) {
-					buffer->Push(std::move(line));  // ring capacity evicts the oldest
-				}
+				for (auto& line : lines) buffer->Push(std::move(line));
 				REX::LogInformation("cosave: restored {} dialogue lines", lines.size());
-			} else {
+			} else if (isMessage) {
 				std::vector<F4DH::Core::MessageLine> messages;
 				if (!F4DH::Core::MessageCosaveCodec::Decode(payload, messages, version)) {
 					REX::LogError("cosave: malformed MSGS record ({} bytes) — message history stays cleared", size);
-					continue;  // fail closed for messages only; HIST may still be valid
+					continue;
 				}
-				for (auto& message : messages) {
-					messageBuffer->Push(std::move(message));  // capacity evicts the oldest
-				}
+				for (auto& message : messages) messageBuffer->Push(std::move(message));
 				REX::LogInformation("cosave: restored {} message(s)", messages.size());
+			} else {
+				std::vector<F4DH::Core::NoteRecord> records;
+				if (!F4DH::Core::NoteCosaveCodec::Decode(payload, records, version)) {
+					REX::LogError("cosave: malformed NOTE record ({} bytes) — note history stays cleared", size);
+					continue;
+				}
+				for (auto& record : records) {
+					record.identity.baseFormID = a_ser->ResolveFormID(record.identity.baseFormID).value_or(0);
+					record.identity.sourceRefFormID = record.identity.sourceRefFormID != 0 ?
+						a_ser->ResolveFormID(record.identity.sourceRefFormID).value_or(0) : 0;
+					record.identity.runtimeUniqueID = 0;
+				}
+				noteStore->ReplaceAll(std::move(records));
+				REX::LogInformation("cosave: restored {} note record(s)", noteStore->Size());
 			}
 		}
 	}
@@ -107,9 +117,8 @@ namespace
 		if (g_buffer) {
 			g_buffer->Clear();  // new game / revert — drop restored history
 		}
-		if (g_messageBuffer) {
-			g_messageBuffer->Clear();
-		}
+		if (g_messageBuffer) g_messageBuffer->Clear();
+		if (g_noteStore) g_noteStore->Clear();
 	}
 }
 
@@ -122,12 +131,13 @@ namespace F4DH::Infrastructure
 		ser->SetSaveCallback(SaveCallback);
 		ser->SetLoadCallback(LoadCallback);
 		ser->SetRevertCallback(RevertCallback);
-		REX::LogInformation("cosave: persistence registered (unique ID 'DLGH', records 'HIST' v2 [loads v1+v2] + 'MSGS' v1)");
+		REX::LogInformation("cosave: persistence registered (unique ID 'DLGH', records 'HIST' v2 [loads v1+v2] + 'MSGS' v1 + 'NOTE' v1)");
 	}
 
-	void CosaveStore::Bind(Core::DialogueBuffer* a_buffer, Core::MessageBuffer* a_messageBuffer)
+	void CosaveStore::Bind(Core::DialogueBuffer* a_buffer, Core::MessageBuffer* a_messageBuffer, Core::NoteStore* a_noteStore)
 	{
 		g_buffer = a_buffer;
 		g_messageBuffer = a_messageBuffer;
+		g_noteStore = a_noteStore;
 	}
 }

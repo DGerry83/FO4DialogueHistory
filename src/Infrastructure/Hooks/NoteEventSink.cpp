@@ -1,6 +1,7 @@
 #include "NoteEventSink.h"
 
 #include "Core/ILogger.h"
+#include "Application/Capture/INoteSink.h"
 #include "Infrastructure/Notes/NoteRecordResolver.h"
 
 #include "F4SE/API.hpp"
@@ -46,23 +47,19 @@ namespace
 
 namespace F4DH::Infrastructure
 {
-	NoteEventSink::NoteEventSink(Core::ILogger& a_log, bool a_verbose) :
+	NoteEventSink::NoteEventSink(Core::ILogger& a_log, bool a_verbose, Application::INoteSink* a_sink) :
 		_log(a_log),
-		_verbose(a_verbose)
+		_verbose(a_verbose),
+		_sink(a_sink)
 	{}
 
 	RE::BSEventNotifyControl NoteEventSink::ProcessEvent(const RE::TESBookReadEvent& a_event, RE::BSTEventSource<RE::TESBookReadEvent>*)
 	{
-		// VerboseCapture off: bare kContinue — no copies, no tasks, no logging.
-		if (!_verbose) {
-			return RE::BSEventNotifyControl::kContinue;
-		}
+		if (!_verbose) return RE::BSEventNotifyControl::kContinue;
 
 		Notes::ReadObservation obs;
 		obs.seq = NextSeq();
 		obs.fromThreadId = ::GetCurrentThreadId();
-		// Null-safe POD read; the event argument keeps bookRef alive for the
-		// duration of this call, and the formID is an immutable member.
 		obs.bookRefFormID = a_event.bookRef ? a_event.bookRef->formID : 0;
 		obs.baseFormID = a_event.baseFormID;
 		obs.uniqueID = a_event.uniqueID;
@@ -75,9 +72,7 @@ namespace F4DH::Infrastructure
 
 	RE::BSEventNotifyControl NoteEventSink::ProcessEvent(const RE::TESContainerChangedEvent& a_event, RE::BSTEventSource<RE::TESContainerChangedEvent>*)
 	{
-		if (!_verbose) {
-			return RE::BSEventNotifyControl::kContinue;
-		}
+		if (!_verbose && !_sink) return RE::BSEventNotifyControl::kContinue;
 
 		Notes::TransferObservation obs;
 		obs.seq = NextSeq();
@@ -90,12 +85,17 @@ namespace F4DH::Infrastructure
 		obs.uniqueID = a_event.uniqueID;
 
 		g_taskInterface->AddTask([this, obs] {
-			Notes::NoteRecordResolver::LogTransferObservation(obs, _log);
+			if (_sink) {
+				if (auto event = Notes::NoteRecordResolver::ResolveTransferObservation(obs, _log)) {
+					_sink->OnNotePickup(*event);
+				}
+			}
+			if (_verbose) Notes::NoteRecordResolver::LogTransferObservation(obs, _log);
 		});
 		return RE::BSEventNotifyControl::kContinue;
 	}
 
-	bool NoteEventSink::Install(Core::ILogger& a_log, bool a_verbose)
+	bool NoteEventSink::Install(Core::ILogger& a_log, bool a_verbose, Application::INoteSink* a_sink)
 	{
 		if (g_installed) {
 			return true;
@@ -121,7 +121,7 @@ namespace F4DH::Infrastructure
 
 		// Process-lifetime storage; F4SE plugins never unload, so there is no
 		// teardown path by design (documented per the interop checklist).
-		static NoteEventSink sink(a_log, a_verbose);
+		static NoteEventSink sink(a_log, a_verbose, a_sink);
 
 		if (!readSource->RegisterSink(&sink)) {
 			a_log.Error("note probe: TESBookReadEvent sink registration refused — note prototype disabled (no subscriptions registered)");

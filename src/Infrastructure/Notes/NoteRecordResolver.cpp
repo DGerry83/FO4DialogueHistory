@@ -1,6 +1,7 @@
 #include "NoteRecordResolver.h"
 
 #include "Core/ILogger.h"
+#include "Core/Note/NoteTextFormatter.h"
 
 #include "RE/B/BGSKeyword.hpp"
 #include "RE/B/BGSLocation.hpp"
@@ -279,6 +280,79 @@ namespace
 				::GetCurrentThreadId()));
 		}
 	}
+
+	const RE::TESObjectREFR* ResolveReference(std::uint32_t a_formID)
+	{
+		if (a_formID == 0) return nullptr;
+		const RE::TESForm* form = RE::TESForm::FindFormByID(a_formID);
+		if (!form && (a_formID & 0xFF000000u) == 0xFF000000u) {
+			form = RE::TESForm::FindFormByNumericID(a_formID);
+		}
+		return form ? form->As<RE::TESObjectREFR>() : nullptr;
+	}
+
+	F4DH::Core::NoteSourceTraits TraitsFor(const RE::TESObjectBOOK& a_book)
+	{
+		F4DH::Core::NoteSourceTraits traits;
+		const auto flags = a_book.data.flags.underlying();
+		traits.teaches =
+			(flags & static_cast<std::uint8_t>(RE::OBJ_BOOK::Flags::kAddPerk)) != 0 ||
+			(flags & static_cast<std::uint8_t>(RE::OBJ_BOOK::Flags::kAddSpell)) != 0 ||
+			(flags & static_cast<std::uint8_t>(RE::OBJ_BOOK::Flags::kAdvancesActorValue)) != 0;
+		for (std::uint32_t i = 0; i < a_book.numKeywords; ++i) {
+			const auto* keyword = a_book.keywords[i];
+			if (keyword && keyword->formID == kPerkMagKeywordID) {
+				traits.hasPerkMagKeyword = true;
+				break;
+			}
+		}
+		return traits;
+	}
+
+	F4DH::Core::EncounterMetadata CurrentEncounter(F4DH::Core::ILogger& a_log, F4DH::Core::EncounterKind a_kind)
+	{
+		F4DH::Core::EncounterMetadata encounter;
+		encounter.kind = a_kind;
+		if (const auto* calendar = RE::Calendar::GetSingleton()) {
+			encounter.timestamp.year = static_cast<std::int32_t>(calendar->GetYear());
+			encounter.timestamp.month = static_cast<std::uint8_t>(static_cast<unsigned>(calendar->GetMonth()));
+			encounter.timestamp.day = static_cast<std::uint8_t>(static_cast<unsigned>(calendar->GetDay()));
+			encounter.timestamp.hour = static_cast<std::uint8_t>(calendar->GetHour().count());
+			encounter.timestamp.minute = static_cast<std::uint8_t>(calendar->GetMinute().count());
+		}
+		encounter.location = FormatPlayerLocation(a_log).first;
+		return encounter;
+	}
+
+	F4DH::Core::NoteIdentity IdentityFor(const RE::TESObjectBOOK& a_book, const RE::TESObjectREFR* a_refr, std::uint16_t a_uniqueID, bool a_dynamic)
+	{
+		F4DH::Core::NoteIdentity identity;
+		identity.kind = a_dynamic ?
+			(a_refr ? F4DH::Core::NoteIdentityKind::DynamicReference : F4DH::Core::NoteIdentityKind::DynamicSynthetic) :
+			F4DH::Core::NoteIdentityKind::StaticBase;
+		identity.baseFormID = a_book.formID;
+		identity.localBaseFormID = a_book.GetLocalFormID();
+		identity.sourceRefFormID = a_refr ? a_refr->formID : 0;
+		identity.runtimeUniqueID = a_uniqueID;
+		if (const auto* file = a_book.GetFile()) identity.pluginName = file->filename.data();
+		return identity;
+	}
+
+	std::string TitleFor(const RE::TESObjectBOOK& a_book, const RE::TESObjectREFR* a_refr)
+	{
+		if (a_refr) {
+			const auto display = RE::TESFullName::GetFormFullOrDisplayName(a_refr);
+			if (display && display->data() && display->data()[0] != '\0') return display->data();
+		}
+		return Safe(a_book.GetFullName());
+	}
+
+	bool HasRawAlias(const RE::TESObjectBOOK& a_book)
+	{
+		RE::BSString text;
+		a_book.GetDescription(text, nullptr);
+		return text.c_str() && F4DH::Core::NoteTextFormatter::ContainsUnresolvedAlias(text.c_str());
+	}
 }
 
 namespace F4DH::Infrastructure::Notes
@@ -534,5 +608,100 @@ namespace F4DH::Infrastructure::Notes
 		const auto [location, locationVia] = FormatPlayerLocation(a_log);
 		a_log.Info(std::format("note probe [bookText {}]: context gameTime={} location='{}' via={}",
 			a_obs.seq, FormatGameTime(), location, locationVia));
+	}
+
+	std::optional<Application::NotePickupEvent> NoteRecordResolver::ResolveTransferObservation(const TransferObservation& a_obs, Core::ILogger& a_log)
+	{
+		const auto* form = RE::TESForm::FindFormByID(a_obs.baseItemFormID);
+		if (!form || !form->Is(RE::FormType::kBook)) return std::nullopt;
+		const auto* player = RE::PlayerCharacter::GetSingleton();
+		if (!player || a_obs.newContainerFormID != player->formID) return std::nullopt;
+
+		const auto* book = static_cast<const RE::TESObjectBOOK*>(form);
+		const auto* refr = ResolveReference(a_obs.itemRefFormID);
+		Application::NotePickupEvent event;
+		event.identity = IdentityFor(*book, refr, a_obs.uniqueID, HasRawAlias(*book));
+		event.title = TitleFor(*book, refr);
+		event.traits = TraitsFor(*book);
+		event.encounter = CurrentEncounter(a_log, Core::EncounterKind::Pickup);
+		return event;
+	}
+
+	std::optional<Application::NoteReadEvent> NoteRecordResolver::ResolvePreparedText(const PreparedTextObservation& a_obs, Core::ILogger& a_log)
+	{
+		const RE::TESForm* form = a_obs.bookFormID != 0 ? RE::TESForm::FindFormByID(a_obs.bookFormID) : nullptr;
+		const auto* book = (form && form->Is(RE::FormType::kBook)) ? static_cast<const RE::TESObjectBOOK*>(form) : nullptr;
+		const auto* refr = ResolveReference(a_obs.refFormID);
+		if (!book && refr) {
+			const auto* base = refr->GetBaseObject();
+			if (base && base->Is(RE::FormType::kBook)) book = static_cast<const RE::TESObjectBOOK*>(base);
+		}
+		if (!book) return std::nullopt;
+
+		const bool dynamic = HasRawAlias(*book);
+		Application::NoteReadEvent event;
+		event.identity = IdentityFor(*book, refr, 0, dynamic);
+		event.title = TitleFor(*book, refr);
+		event.traits = TraitsFor(*book);
+		event.encounter = CurrentEncounter(a_log, Core::EncounterKind::Read);
+
+		RE::BSString inherited;
+		book->GetDescription(inherited, nullptr);
+		RE::BSString itemCard;
+		book->itemCardDescription.GetDescription(itemCard, book);
+		const bool noText = (!inherited.c_str() || inherited.c_str()[0] == '\0') &&
+			(!itemCard.c_str() || itemCard.c_str()[0] == '\0') && a_obs.body.empty();
+		if (noText) {
+			const auto* model = static_cast<const RE::TESModel*>(book)->GetModel();
+			event.traits.textureOnly = model && std::string_view(model) != "Props\\Note_LowPoly.nif";
+			event.bodyMode = Core::NoteBodyMode::Empty;
+			return event;
+		}
+		if (Core::NoteTextFormatter::ContainsUnresolvedAlias(a_obs.body)) {
+			event.bodyMode = Core::NoteBodyMode::Unavailable;
+			return event;
+		}
+		event.plainBody = Core::NoteTextFormatter::ToPlainText(a_obs.body);
+		event.bodyMode = dynamic ? Core::NoteBodyMode::CachedResolved :
+			(event.plainBody.empty() ? Core::NoteBodyMode::Empty : Core::NoteBodyMode::ResolveStatic);
+		return event;
+	}
+
+	Core::NoteBodyResult NoteRecordResolver::BodySource::ResolveBody(const Core::NoteRecord& record)
+	{
+		Core::NoteBodyResult result;
+		result.entryId = record.identity.entryId;
+		result.title = record.title;
+		result.pluginName = record.identity.pluginName;
+		result.firstEncounter = record.firstEncounter;
+		if (record.bodyMode == Core::NoteBodyMode::CachedResolved) {
+			result.status = Core::NoteBodyResult::Status::Ready;
+			result.body = record.cachedBody;
+			return result;
+		}
+		if (record.bodyMode == Core::NoteBodyMode::Empty) {
+			result.status = Core::NoteBodyResult::Status::Empty;
+			return result;
+		}
+		if (record.bodyMode == Core::NoteBodyMode::Unavailable) {
+			result.status = Core::NoteBodyResult::Status::Unavailable;
+			return result;
+		}
+
+		const auto* form = RE::TESForm::FindFormByID(record.identity.baseFormID);
+		if (!form || !form->Is(RE::FormType::kBook)) {
+			result.status = Core::NoteBodyResult::Status::MissingPlugin;
+			return result;
+		}
+		const auto* book = static_cast<const RE::TESObjectBOOK*>(form);
+		RE::BSString text;
+		book->GetDescription(text, nullptr);
+		if (text.c_str() && Core::NoteTextFormatter::ContainsUnresolvedAlias(text.c_str())) {
+			result.status = Core::NoteBodyResult::Status::Unavailable;
+			return result;
+		}
+		result.body = Core::NoteTextFormatter::ToPlainText(text.c_str() ? text.c_str() : "");
+		result.status = result.body.empty() ? Core::NoteBodyResult::Status::Empty : Core::NoteBodyResult::Status::Ready;
+		return result;
 	}
 }

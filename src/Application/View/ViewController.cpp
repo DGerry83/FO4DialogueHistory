@@ -4,49 +4,54 @@
 
 #include "Core/Dialogue/PayloadBuilder.h"
 #include "Core/Message/MessagePayloadBuilder.h"
+#include "Core/Note/NotePayloadBuilder.h"
+#include "Core/Note/NoteSearch.h"
 #include "Application/Input/IGameplayInputGate.h"
 
 namespace F4DH::Application
 {
 	namespace
 	{
-		// Single routing target for every global thunk (close + clear), set
-		// by SetCloseTarget at composition time.
 		ViewController* g_target{ nullptr };
 
 		void CloseThunk()
 		{
-			if (g_target) {
-				g_target->OnCloseRequested();
-			}
+			if (g_target) g_target->OnCloseRequested();
 		}
 
 		void ClearAllThunk()
 		{
-			if (g_target) {
-				g_target->OnClearAll();
-			}
+			if (g_target) g_target->OnClearAll();
 		}
 
 		void ClearQuestThunk(std::uint32_t questId)
 		{
-			if (g_target) {
-				g_target->OnClearQuest(questId);
-			}
+			if (g_target) g_target->OnClearQuest(questId);
 		}
 
 		void ClearQuestsThunk(const std::vector<std::uint32_t>& questIds)
 		{
-			if (g_target) {
-				g_target->OnClearQuests(questIds);
-			}
+			if (g_target) g_target->OnClearQuests(questIds);
 		}
 
 		void ClearMessagesThunk()
 		{
-			if (g_target) {
-				g_target->OnClearMessages();
-			}
+			if (g_target) g_target->OnClearMessages();
+		}
+
+		void ClearNotesThunk()
+		{
+			if (g_target) g_target->OnClearNotes();
+		}
+
+		void NoteBodyThunk(std::uint64_t entryId)
+		{
+			if (g_target) g_target->OnNoteBodyRequested(entryId);
+		}
+
+		void NoteSearchThunk(const std::string& term)
+		{
+			if (g_target) g_target->OnNoteSearchRequested(term);
 		}
 	}
 
@@ -55,9 +60,11 @@ namespace F4DH::Application
 		g_target = instance;
 	}
 
-	ViewController::ViewController(Core::DialogueBuffer& buffer, Core::MessageBuffer& messageBuffer, IViewBridge& bridge, Core::ILogger& logger) :
+	ViewController::ViewController(Core::DialogueBuffer& buffer, Core::MessageBuffer& messageBuffer, Core::NoteStore& noteStore, INoteBodySource& noteBodySource, IViewBridge& bridge, Core::ILogger& logger) :
 		_buffer(buffer),
 		_messageBuffer(messageBuffer),
+		_noteStore(noteStore),
+		_noteBodySource(noteBodySource),
 		_bridge(bridge),
 		_logger(logger)
 	{
@@ -65,6 +72,9 @@ namespace F4DH::Application
 		_bridge.SetClearCallbacks(&ClearAllThunk, &ClearQuestThunk);
 		_bridge.SetClearQuestsCallback(&ClearQuestsThunk);
 		_bridge.SetClearMessagesCallback(&ClearMessagesThunk);
+		_bridge.SetClearNotesCallback(&ClearNotesThunk);
+		_bridge.SetNoteBodyRequestCallback(&NoteBodyThunk);
+		_bridge.SetNoteSearchRequestCallback(&NoteSearchThunk);
 	}
 
 	void ViewController::Toggle()
@@ -105,11 +115,39 @@ namespace F4DH::Application
 		}
 	}
 
+	void ViewController::NotifyNote()
+	{
+		if (_state == ViewState::Open) PushNoteSnapshot();
+	}
+
+	void ViewController::OnNoteBodyRequested(std::uint64_t entryId)
+	{
+		const auto record = _noteStore.Find(entryId);
+		if (!record) return;
+		_bridge.PushNoteBody(Core::NotePayloadBuilder::BuildBody(_noteBodySource.ResolveBody(*record)));
+	}
+
+	void ViewController::OnNoteSearchRequested(const std::string& term)
+	{
+		_noteSearchTerm = term;
+		PushNoteSnapshot();
+	}
+
+	void ViewController::PushNoteSnapshot()
+	{
+		std::vector<Core::NoteListItem> items;
+		for (const auto& record : _noteStore.VisibleSnapshot()) {
+			const auto body = _noteBodySource.ResolveBody(record);
+			const bool hasBody = body.status == Core::NoteBodyResult::Status::Ready;
+			if (!Core::NoteSearch::Matches(record.title, hasBody ? body.body : std::string{}, _noteSearchTerm)) continue;
+			items.push_back({ record.identity.entryId, record.title, record.firstReadSequence });
+		}
+		_bridge.PushNoteSnapshot(Core::NotePayloadBuilder::BuildList(items));
+	}
+
 	void ViewController::OnCloseRequested()
 	{
-		if (_state == ViewState::Open) {
-			Close();
-		}
+		if (_state == ViewState::Open) Close();
 	}
 
 	void ViewController::OnClearAll()
@@ -144,13 +182,16 @@ namespace F4DH::Application
 
 	void ViewController::OnClearMessages()
 	{
-		// Message-only clear: dialogue storage, snapshots, search, and
-		// selection are untouched (AC10). The empty message snapshot is pushed
-		// like the dialogue clear's refresh so an open panel updates and a
-		// later DOM-ready replay restores the cleared state.
 		_messageBuffer.Clear();
 		_logger.Info("clear history: removed all messages");
 		_bridge.PushMessageSnapshot(Core::MessagePayloadBuilder::BuildSnapshot(_messageBuffer.Snapshot()));
+	}
+
+	void ViewController::OnClearNotes()
+	{
+		_noteStore.Clear();
+		_logger.Info("clear history: removed all notes");
+		PushNoteSnapshot();
 	}
 
 	void ViewController::SetTyping(bool typing) noexcept
@@ -188,6 +229,8 @@ namespace F4DH::Application
 		// independently — both caches/snapshots go down their own transports.
 		_bridge.PushSnapshot(Core::PayloadBuilder::BuildSnapshot(_buffer.Snapshot()));
 		_bridge.PushMessageSnapshot(Core::MessagePayloadBuilder::BuildSnapshot(_messageBuffer.Snapshot()));
+		_noteSearchTerm.clear();
+		PushNoteSnapshot();
 		_bridge.Show();
 		_bridge.Focus();
 		_state = ViewState::Open;

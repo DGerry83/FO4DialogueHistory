@@ -26,6 +26,7 @@ namespace F4DH::Application
 		std::size_t   bufferSize = 0;       // 0 = unlimited (no eviction); >0 caps, range 10–500. Dialogue-only; message retention is MessageBufferSize
 		std::size_t   messageBufferSize = Core::MessageBuffer::kDefaultCapacity;  // [Settings] MessageBufferSize: retained HUD messages, 1–1000 (0 clamps to 1); invalid keeps 200. Bounded FIFO — no unlimited mode
 		std::vector<std::string> messageExcludedPrefixes;  // [MessageFilters] ExcludedPrefix entries from the sibling MessageFilters.ini; exact case-sensitive message-text prefixes
+		std::vector<std::string> noteGenericTitles{ "Note", "Letter", "Ransom Note" };  // [Settings] NoteGenericTitles: optional pipe-separated exact-title list
 		bool          verboseCapture = false;  // [Diagnostics] VerboseCapture: log every subtitle event at Information level
 		bool          keyProbe = false;        // [Diagnostics] KeyProbe: log every keyboard press code the engine delivers (bind diagnostics)
 		std::uint32_t stressTestKey = 0;       // [Diagnostics] StressTestKey: DIK scan code (INI accepts key names + "off") injecting one synthetic batch; 0 = disabled

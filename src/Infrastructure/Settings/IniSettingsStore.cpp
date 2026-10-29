@@ -431,6 +431,21 @@ namespace F4DH::Infrastructure
 				} else {
 					settings.messageBufferSize = parsed;
 				}
+			} else if (key == "notegenerictitles") {
+				std::vector<std::string> titles;
+				std::size_t start = 0;
+				while (start <= value.size()) {
+					const auto end = value.find('|', start);
+					const auto title = Trim(std::string_view(value).substr(start, end - start));
+					if (!title.empty()) titles.emplace_back(title);
+					if (end == std::string::npos) break;
+					start = end + 1;
+				}
+				if (titles.empty()) {
+					REX::LogWarning("IniSettingsStore: NoteGenericTitles has no valid entries — keeping defaults");
+				} else {
+					settings.noteGenericTitles = std::move(titles);
+				}
 			} else if (key == "fontsize") {
 				if (!ok) {
 					REX::LogWarning("IniSettingsStore: invalid FontSize '{}' — keeping default 16", value);

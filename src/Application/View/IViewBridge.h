@@ -15,6 +15,9 @@ namespace F4DH::Application
 		using ClearQuestCallback = void (*)(std::uint32_t);
 		using ClearQuestsCallback = void (*)(const std::vector<std::uint32_t>&);
 		using ClearMessagesCallback = void (*)();  // message-history clear request (no payload — always all)
+		using ClearNotesCallback = void (*)();
+		using NoteBodyRequestCallback = void (*)(std::uint64_t);
+		using NoteSearchRequestCallback = void (*)(const std::string&);
 
 		virtual ~IViewBridge() = default;
 
@@ -29,10 +32,15 @@ namespace F4DH::Application
 		// Separate transport from the dialogue payloads by contract.
 		virtual void PushMessageSnapshot(const std::string& json) = 0;
 		virtual void AppendMessage(const std::string& json) = 0;
+		virtual void PushNoteSnapshot(const std::string& json) = 0;
+		virtual void PushNoteBody(const std::string& json) = 0;
 		virtual void SetCloseCallback(CloseCallback fn) = 0;
 		virtual void SetClearCallbacks(ClearAllCallback allFn, ClearQuestCallback questFn) = 0;
 		virtual void SetClearQuestsCallback(ClearQuestsCallback questsFn) = 0;
 		virtual void SetClearMessagesCallback(ClearMessagesCallback fn) = 0;
+		virtual void SetClearNotesCallback(ClearNotesCallback fn) = 0;
+		virtual void SetNoteBodyRequestCallback(NoteBodyRequestCallback fn) = 0;
+		virtual void SetNoteSearchRequestCallback(NoteSearchRequestCallback fn) = 0;
 		[[nodiscard]] virtual bool IsHealthy() = 0;
 	};
 }

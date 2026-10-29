@@ -1,6 +1,7 @@
 #include "BookMenuTextHook.h"
 
 #include "Core/ILogger.h"
+#include "Application/Capture/INoteSink.h"
 #include "Infrastructure/Notes/NoteRecordResolver.h"
 
 #include "F4SE/API.hpp"
@@ -160,6 +161,7 @@ namespace
 	PrepareBookText_t*         g_original{ nullptr };
 	F4DH::Core::ILogger*       g_log{ nullptr };
 	const F4SE::TaskInterface* g_taskInterface{ nullptr };
+	F4DH::Application::INoteSink* g_noteSink{ nullptr };
 	bool                       g_verbose{ false };
 	bool                       g_installed{ false };
 	std::atomic<std::uint64_t> g_bookTextSeq{ 0 };
@@ -188,7 +190,7 @@ namespace
 		// Vanilla first — a failure below must never break BookMenu.
 		g_original(a_bookMenu, a_text, a_length);
 
-		if (!g_verbose || !a_text || a_length == 0) {
+		if ((!g_verbose && !g_noteSink) || !a_text || a_length == 0) {
 			return;
 		}
 
@@ -245,14 +247,19 @@ namespace
 		// copyable callable; the observation stays sole-owned by the capture.
 		auto sharedObs = std::make_shared<F4DH::Infrastructure::Notes::PreparedTextObservation>(std::move(obs));
 		g_taskInterface->AddTask([sharedObs]() mutable {
-			F4DH::Infrastructure::Notes::NoteRecordResolver::LogPreparedBookText(std::move(*sharedObs), *g_log);
+			if (g_noteSink) {
+				if (auto event = F4DH::Infrastructure::Notes::NoteRecordResolver::ResolvePreparedText(*sharedObs, *g_log)) {
+					g_noteSink->OnNoteRead(*event);
+				}
+			}
+			if (g_verbose) F4DH::Infrastructure::Notes::NoteRecordResolver::LogPreparedBookText(std::move(*sharedObs), *g_log);
 		});
 	}
 }
 
 namespace F4DH::Infrastructure
 {
-	bool BookMenuTextHook::Install(Core::ILogger& a_log, bool a_verbose)
+	bool BookMenuTextHook::Install(Core::ILogger& a_log, bool a_verbose, Application::INoteSink* a_sink)
 	{
 		if (g_installed) {
 			return true;  // resolved (installed or explicitly disabled)
@@ -294,6 +301,7 @@ namespace F4DH::Infrastructure
 
 		g_taskInterface = F4SE::GetTaskInterface().get();
 		g_log = &a_log;
+		g_noteSink = a_sink;
 		g_verbose = a_verbose;
 		g_installed = true;
 		a_log.Info(std::format("note probe: BookMenu::PrepareBookText detour installed (OG, Address Library id {}, 9-byte prologue, 33-byte continuation), verboseCapture={}",

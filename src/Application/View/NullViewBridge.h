@@ -18,10 +18,15 @@ namespace F4DH::Application
 		void AppendLine(const std::string&) override {}
 		void PushMessageSnapshot(const std::string&) override {}
 		void AppendMessage(const std::string&) override {}
+		void PushNoteSnapshot(const std::string&) override {}
+		void PushNoteBody(const std::string&) override {}
 		void SetCloseCallback(CloseCallback) override {}
 		void SetClearCallbacks(ClearAllCallback, ClearQuestCallback) override {}
 		void SetClearQuestsCallback(ClearQuestsCallback) override {}
 		void SetClearMessagesCallback(ClearMessagesCallback) override {}
+		void SetClearNotesCallback(ClearNotesCallback) override {}
+		void SetNoteBodyRequestCallback(NoteBodyRequestCallback) override {}
+		void SetNoteSearchRequestCallback(NoteSearchRequestCallback) override {}
 		[[nodiscard]] bool IsHealthy() override { return false; }
 	};
 }

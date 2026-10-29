@@ -561,10 +561,9 @@ html, body {
   border-color: #7BFF7B;
 }
 
-/* ======== Message History (v1.3.0) ========================================
- * Two tabs, one panel (design §6.3): the strip sits between the header and
- * the body; the mode class on #panel shows exactly one body pane. Hidden
- * dialogue controls are display:none — no hit testing, no focus resolution. */
+/* ======== Tabbed histories ================================================
+ * The strip sits between header and body; the mode class shows one pane.
+ * Hidden dialogue controls are display:none — no hit testing or focus. */
 #tabstrip {
   display: flex;
   flex: none;
@@ -577,45 +576,63 @@ html, body {
 #tabmessage {
   background: transparent;
   border: none;
-  /* The active accent rides a constant 2px bottom border (transparent when
-   * inactive) so switching tabs never shifts the strip's height. */
   border-bottom: 2px solid transparent;
   color: #4C8A4C;
-  font: inherit;  /* the scaled html/body base — panel-wide 10–48 scaling */
+  font: inherit;
+  padding: calc(3px * var(--dh-font-scale)) calc(10px * var(--dh-font-scale));
+  cursor: pointer;
+}
+#tabnote {
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: #4C8A4C;
+  font: inherit;
   padding: calc(3px * var(--dh-font-scale)) calc(10px * var(--dh-font-scale));
   cursor: pointer;
 }
 #tabdialogue:hover,
-#tabmessage:hover {
-  color: #7BFF7B;  /* existing brighter accent */
+#tabmessage:hover,
+#tabnote:hover {
+  color: #7BFF7B;
 }
 #tabdialogue.active,
-#tabmessage.active {
+#tabmessage.active,
+#tabnote.active {
   color: #7BFF7B;
-  font-weight: bold;             /* differs by weight/indicator, not color alone */
-  border-bottom-color: #7BFF7B;  /* active accent */
+  font-weight: bold;
+  border-bottom-color: #7BFF7B;
 }
 
-/* Message pane: full-width body region (§6.2). Shown only in messages mode. */
 #messages {
   display: none;
   flex: 1;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
+}
+#notes {
+  display: none;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
 }
 #panel.dh-msgs #index,
 #panel.dh-msgs #split,
-#panel.dh-msgs #dialogue {
+#panel.dh-msgs #dialogue,
+#panel.dh-notes #index,
+#panel.dh-notes #split,
+#panel.dh-notes #dialogue {
   display: none;
 }
 #panel.dh-msgs #messages {
   display: flex;
 }
+#panel.dh-notes #notes {
+  display: flex;
+}
 
-/* The message log mirrors #log's readable geometry (same padding, line
- * spacing, body color). Its font size inherits the scaled html/body base
- * (render-identical to #log's rule); the plugin's inline px (setFontSize)
- * wins at runtime so mh row measurements stay exact. */
 #msglog {
   flex: 1;
   overflow-y: auto;
@@ -633,19 +650,78 @@ html, body {
   background: #2B5B2B;
   border-radius: 4px;
 }
-
-/* Message empty state — positioned like the dialogue #empty (§6.3); font
- * inherits the scaled base. */
-#msgempty {
+#msgempty,
+#noteempty {
   padding: 24px 10px;
   text-align: center;
   color: #4C8A4C;
 }
 
-/* v1.3.0 tab focus indicator — the existing 2px ring (outline takes no
- * layout space, so focus moves never shift the strip). */
 #tabdialogue.dh-focus,
-#tabmessage.dh-focus {
+#tabmessage.dh-focus,
+#tabnote.dh-focus {
+  outline: 2px solid #7BFF7B;
+  outline-offset: -2px;
+}
+
+#notebar {
+  flex: none;
+  padding: 4px 0;
+  border-bottom: 1px solid #2B5B2B;
+}
+#notesearch {
+  width: calc(100% - 20px);
+  margin: 4px 10px;
+  padding: 5px 8px;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid #2B5B2B;
+  border-radius: 4px;
+  color: #D7FFD7;
+  font: inherit;
+}
+#notepanes {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+#notelist {
+  width: 36%;
+  min-width: 160px;
+  overflow-y: auto;
+  border-right: 1px solid #2B5B2B;
+}
+.nentry {
+  padding: 7px 9px;
+  color: #D7FFD7;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.nentry:hover,
+.nentry.active {
+  background: rgba(43, 91, 43, 0.45);
+}
+#notedetail {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 10px 12px;
+  color: #D7FFD7;
+  line-height: 1.45;
+}
+#notemeta {
+  color: #FFD866;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #2B5B2B;
+  margin-bottom: 10px;
+  white-space: pre-wrap;
+}
+#notebody {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+#notesearch.dh-focus,
+#notelist.dh-focus,
+#notedetail.dh-focus {
   outline: 2px solid #7BFF7B;
   outline-offset: -2px;
 }

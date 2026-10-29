@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 4.3.0)
 
-project(FO4DialogueHistory VERSION 1.3.0 LANGUAGES CXX)
+project(FO4DialogueHistory VERSION 1.4.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -38,6 +38,12 @@ add_library(${PROJECT_NAME} SHARED
 	src/Core/Dialogue/StressTestDataGenerator.cpp
 	src/Core/Message/MessagePayloadBuilder.cpp
 	src/Core/Message/MessageCosaveCodec.cpp
+	src/Core/Note/NoteTextFormatter.cpp
+	src/Core/Note/NoteTitleGenerator.cpp
+	src/Core/Note/NoteStore.cpp
+	src/Core/Note/NoteSearch.cpp
+	src/Core/Note/NotePayloadBuilder.cpp
+	src/Core/Note/NoteCosaveCodec.cpp
 	src/Core/Geometry/PanelGeometry.cpp
 	src/Core/Settings/ViewFilterState.cpp
 	src/Core/Settings/ViewPreferences.cpp
@@ -45,6 +51,7 @@ add_library(${PROJECT_NAME} SHARED
 	src/Core/Input/GamepadButtonMap.cpp
 	src/Application/Capture/CapturePipeline.cpp
 	src/Application/Capture/MessageCapturePipeline.cpp
+	src/Application/Capture/NoteCapturePipeline.cpp
 	src/Application/View/ViewController.cpp
 	src/Application/Input/HotkeyController.cpp
 	src/Application/StressTest/StressTestInjector.cpp

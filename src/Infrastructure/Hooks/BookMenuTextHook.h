@@ -5,6 +5,11 @@ namespace F4DH::Core
 	class ILogger;
 }
 
+namespace F4DH::Application
+{
+	class INoteSink;
+}
+
 namespace F4DH::Infrastructure
 {
 	// M1 follow-up diagnostic (NEXT_PROBE_CONTRACT.md): OG-only prologue
@@ -24,6 +29,6 @@ namespace F4DH::Infrastructure
 		// enable refusal); non-OG runtimes resolve here as disabled and return
 		// true. Address Library / WriteSafe failures are fork-hard (REX::Fail)
 		// and are not claimed recoverable.
-		bool Install(Core::ILogger& a_log, bool a_verbose);
+		bool Install(Core::ILogger& a_log, bool a_verbose, Application::INoteSink* a_sink = nullptr);
 	}
 }

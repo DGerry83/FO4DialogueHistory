@@ -37,9 +37,9 @@
  *                 snapshot of {text:string}; window.appendMessage(json) one
  *                 {text:string} — separate channels from dialogue, either
  *                 arrival order tolerated; the confirmed message clear
- *                 dispatches window.clearMessagesRequested(""). Two tabs
- *                 (#tabdialogue / #tabmessage) share one panel via a #panel
- *                 mode class (dh-msgs); a fresh setHistory selects Dialogue
+ *                 dispatches window.clearMessagesRequested(""). Dialogue,
+ *                 message, and note tabs share one panel via mode classes;
+ *                 a fresh setHistory selects Dialogue
  *                 History and arms the message tab's first-activation snap;
  *                 the tab strip is a focus zone OUTSIDE the legacy six-zone
  *                 cycle (design §6.1); hidden-pane appends are model-only +
@@ -774,8 +774,8 @@ function dhUpdateWindow() {
   if (dhScrollSilencing) {
     return;
   }
-  if (dhPanelMessages()) {
-    return;  // v1.3.0: dialogue pane hidden — no inactive-pane window work
+  if (dhActiveTabIndex() !== 0) {
+    return;  // dialogue pane hidden — no inactive-pane window work
   }
   const log = document.getElementById("log");
   if (!log) {
@@ -865,11 +865,8 @@ function dhInvalidateHeights() {
   if (dhBlockHeights.length === 0) {
     return;
   }
-  if (dhPanelMessages()) {
-    // v1.3.0: the dialogue pane is hidden (Message History active) — no
-    // layout reads/writes against display:none content (they would record
-    // 0-height measurements into the running average). Stale-mark only;
-    // the saved average seeds the re-estimates when the pane returns.
+  if (dhActiveTabIndex() !== 0) {
+    // The dialogue pane is hidden — stale-mark only; never measure hidden content.
     dhEstSeed = dhBlockLayout().est;
     for (let b = 0; b < dhBlockHeights.length; b++) {
       dhBlockHeights[b] = 0;
@@ -915,8 +912,8 @@ function dhCheckLogWidth() {
   if (!log) {
     return;
   }
-  if (dhPanelMessages()) {
-    dhLogWidth = -1;  // v1.3.0: hidden pane — reseed when dialogue returns
+  if (dhActiveTabIndex() !== 0) {
+    dhLogWidth = -1;  // hidden pane — reseed when dialogue returns
     return;
   }
   const w = log.clientWidth;
@@ -1000,22 +997,34 @@ function dhPanelMessages() {
   return !!(panel && panel.classList && panel.classList.contains("dh-msgs"));
 }
 
-function dhSetPanelMessages(on) {
+function dhPanelNotes() {
   const panel = document.getElementById("panel");
-  if (panel && panel.classList) {
-    if (on) {
-      panel.classList.add("dh-msgs");
-    } else {
-      panel.classList.remove("dh-msgs");
-    }
+  return !!(panel && panel.classList && panel.classList.contains("dh-notes"));
+}
+
+function dhSetPanelTab(idx) {
+  const panel = document.getElementById("panel");
+  if (!panel || !panel.classList) {
+    return;
+  }
+  panel.classList.remove("dh-msgs");
+  panel.classList.remove("dh-notes");
+  if (idx === 1) {
+    panel.classList.add("dh-msgs");
+  } else if (idx === 2) {
+    panel.classList.add("dh-notes");
   }
 }
 
-/* Both tab buttons, or null in legacy worlds without the tabstrip. */
+function dhSetPanelMessages(on) {
+  dhSetPanelTab(on ? 1 : 0);
+}
+
 function dhTabElements() {
   const d = document.getElementById("tabdialogue");
   const m = document.getElementById("tabmessage");
-  return d && m ? [d, m] : null;
+  const n = document.getElementById("tabnote");
+  return d && m ? (n ? [d, m, n] : [d, m]) : null;
 }
 
 function dhHasTabs() {
@@ -1023,13 +1032,11 @@ function dhHasTabs() {
 }
 
 function dhActiveTabIndex() {
-  return dhPanelMessages() ? 1 : 0;
+  return dhPanelNotes() ? 2 : dhPanelMessages() ? 1 : 0;
 }
 
-/* Dialogue pane visibility — false only when the messages tab owns the
- * panel (legacy worlds are always dialogue-visible). */
 function dhDialogueVisible() {
-  return !dhPanelMessages();
+  return dhActiveTabIndex() === 0;
 }
 
 function dhSavePaneScroll() {
@@ -1038,6 +1045,8 @@ function dhSavePaneScroll() {
     if (log) {
       mhSavedScroll = log.scrollTop;
     }
+  } else if (dhPanelNotes()) {
+    nhSaveScroll();
   } else {
     const log = document.getElementById("log");
     if (log) {
@@ -1046,39 +1055,37 @@ function dhSavePaneScroll() {
   }
 }
 
-/* Activate a tab (0 = Dialogue History, 1 = Message History). User-driven
- * entry point (mouse click, focused-strip Left/Right, Enter): saves the
- * outgoing pane's reading position, flips the mode class + tab indicators,
- * then either first-activation-snaps the message log (§6.4) or restores the
- * saved scroll. No-op in legacy worlds; focus lands on the strip, never
- * yanked into content — a typing text box always blurs + reports. */
 function dhActivateTab(idx) {
   const tabs = dhTabElements();
   if (!tabs) {
     return;
   }
-  idx = idx === 1 ? 1 : 0;
-  const toMessages = idx === 1;
-  if (toMessages === dhPanelMessages()) {
+  idx = Math.max(0, Math.min(tabs.length - 1, idx));
+  if (idx === dhActiveTabIndex()) {
     dhFocusPos.tabs = idx;
-    dhFocusApply();  // keep/place the indicator; the zone stays put
+    dhFocusApply();
     return;
   }
   dhSavePaneScroll();
-  dhSetPanelMessages(toMessages);
-  if (toMessages) {
-    tabs[0].classList.remove("active");
-    tabs[1].classList.add("active");
-    mhLogWidth = -1;  // reseed against the true width below
+  dhSetPanelTab(idx);
+  for (let i = 0; i < tabs.length; i++) {
+    if (i === idx) {
+      tabs[i].classList.add("active");
+    } else {
+      tabs[i].classList.remove("active");
+    }
+  }
+  if (idx === 1) {
+    mhLogWidth = -1;
     if (!mhMsgsActivated) {
       mhMsgsActivated = true;
-      mhRenderLog();  // §6.4: newest before paint on first activation
+      mhRenderLog();
     } else {
       mhRestorePane(mhSavedScroll);
     }
+  } else if (idx === 2) {
+    nhRestorePane();
   } else {
-    tabs[0].classList.add("active");
-    tabs[1].classList.remove("active");
     dhLogWidth = -1;
     dhRestoreDialoguePane(dhDialogueScroll);
   }
@@ -1250,7 +1257,7 @@ function mhUpdateWindow() {
     return;
   }
   const log = document.getElementById("msglog");
-  if (!log || !dhPanelMessages()) {
+  if (!log || dhActiveTabIndex() === 0) {
     return;  // window only the visible pane (legacy worlds: no pane, no work)
   }
   const n = mhBlockHeights.length;
@@ -1334,7 +1341,7 @@ function mhRebuildView() {
 
 function mhApplySearchTerm(value) {
   mhSearchTerm = value;
-  if (!dhPanelMessages()) {
+  if (dhActiveTabIndex() === 0) {
     mhRebuildView();
     mhDomDirty = true;
     mhUpdateEmpty();
@@ -1412,7 +1419,7 @@ function mhInvalidateHeights() {
   if (mhBlockHeights.length === 0) {
     return;
   }
-  if (!dhPanelMessages()) {
+  if (dhActiveTabIndex() === 0) {
     mhEstSeed = mhBlockLayout().est;
     for (let b = 0; b < mhBlockHeights.length; b++) {
       mhBlockHeights[b] = 0;
@@ -1453,7 +1460,7 @@ function mhCheckLogWidth() {
   if (!log) {
     return;
   }
-  if (!dhPanelMessages()) {
+  if (dhActiveTabIndex() === 0) {
     mhLogWidth = -1;  // reseed when the messages pane shows again
     return;
   }
@@ -1536,7 +1543,7 @@ function appendMessage(msg) {
     }
     return;
   }
-  if (!dhPanelMessages() || !log) {
+  if (dhActiveTabIndex() === 0 || !log) {
     mhViewLines.push(msg);  // keep the view current — only the DOM lags
     const prevBlocks = mhBlockHeights.length;
     if (Math.ceil(mhViewLines.length / kMsgBlockRows) > prevBlocks) {
@@ -2230,16 +2237,22 @@ function setHistory(lines) {
   // panel is already there) and arm the message tab's first-activation
   // snap. Message contents and scroll survive; message search resets like the
   // dialogue searches so every fresh open starts unfiltered.
-  if (dhPanelMessages()) {
+  if (dhActiveTabIndex() !== 0) {
     dhSavePaneScroll();
-    dhSetPanelMessages(false);
+    dhSetPanelTab(0);
     const tabs = dhTabElements();
     if (tabs) {
-      tabs[0].classList.add("active");
-      tabs[1].classList.remove("active");
+      for (let i = 0; i < tabs.length; i++) {
+        if (i === 0) {
+          tabs[i].classList.add("active");
+        } else {
+          tabs[i].classList.remove("active");
+        }
+      }
     }
     dhFocusPos.tabs = 0;
   }
+  nhResetFreshOpen();
   mhMsgsActivated = false;
   const msgSearch = document.getElementById("msgsearch");
   if (msgSearch) {
@@ -2728,16 +2741,8 @@ function dhOverlayVisible() {
 }
 
 function dhShowClearOverlay(scope) {
-  // #003: the clear scope is the current selection — "all", a single quest
-  // (incl. a one-quest selection set), or "multi" with the numerically
-  // sorted ids for a larger set (deterministic payload order). C7: the
-  // controller's clear_all action passes scope "all" to force ALL scope
-  // regardless of the selection; the button and the focus model pass
-  // nothing and keep the selection-derived behavior. v1.3.0: "messages"
-  // scopes to Message History only (shared Clear button / Y on the
-  // messages tab) and never touches the dialogue selection.
-  if (scope === "messages") {
-    dhClearTarget = "messages";
+  if (scope === "messages" || scope === "notes") {
+    dhClearTarget = scope;
     dhClearIds = [];
   } else if (scope === "all") {
     dhClearTarget = "all";
@@ -2751,26 +2756,17 @@ function dhShowClearOverlay(scope) {
   }
   const msg = document.getElementById("overlaymsg");
   if (msg) {
-    // C16: the message names its scope. Built from text nodes (never
-    // innerHTML) so a quest name can't inject markup.
     msg.textContent = "";
-    if (dhClearTarget === "all") {
-      const all = document.createElement("span");
-      all.className = "clearall";
-      all.textContent = "ALL";
+    const all = document.createElement("span");
+    all.className = "clearall";
+    all.textContent = "ALL";
+    if (dhClearTarget === "all" || dhClearTarget === "messages" || dhClearTarget === "notes") {
+      const label = dhClearTarget === "all" ? " dialogue" : dhClearTarget === "messages" ? " message" : " note";
       msg.append(document.createTextNode("This will clear "), all,
-        document.createTextNode(" dialogue history. Are you sure?"));
-    } else if (dhClearTarget === "messages") {
-      // v1.3.0 §7.1 DH_ClearMessagesConfirm — ALL keeps the C16 bold red
-      // caps emphasis.
-      const mall = document.createElement("span");
-      mall.className = "clearall";
-      mall.textContent = "ALL";
-      msg.append(document.createTextNode("This will clear "), mall,
-        document.createTextNode(" message history. Are you sure?"));
+        document.createTextNode(label + " history. Are you sure?"));
     } else {
       const name = document.createElement("span");
-      name.className = "clearscope";  // "multiple quests" keeps the quest-scope styling
+      name.className = "clearscope";
       name.textContent = dhClearTarget === "multi" ? "multiple quests" : dhClearScopeText();
       msg.append(document.createTextNode("This will clear all dialogue history for "), name,
         document.createTextNode(". Are you sure?"));
@@ -2780,7 +2776,7 @@ function dhShowClearOverlay(scope) {
   if (overlay) {
     overlay.hidden = false;
   }
-  dhFocusEnterOverlay();  // C6: trap focus on the overlay (starts on Cancel)
+  dhFocusEnterOverlay();
 }
 
 function dhHideClearOverlay() {
@@ -2788,26 +2784,29 @@ function dhHideClearOverlay() {
   if (overlay) {
     overlay.hidden = true;
   }
-  dhFocusExitOverlay();  // C6/D6: restore the pre-overlay zone position
+  dhFocusExitOverlay();
 }
 
 function dhConfirmClear() {
   dhHideClearOverlay();
   if (dhClearTarget === "messages") {
-    // v1.3.0: distinct message-clear request — native clears the message
-    // buffer and re-pushes its snapshot; dialogue state is never touched.
     const fn = window.clearMessagesRequested;
-    if (typeof fn === "function") {  // registered by the plugin (v1.3.0 DLLs)
+    if (typeof fn === "function") {
+      fn("");
+    }
+  } else if (dhClearTarget === "notes") {
+    const fn = window.clearNotesRequested;
+    if (typeof fn === "function") {
       fn("");
     }
   } else if (dhClearTarget === "all") {
     const fn = window.clearAllRequested;
-    if (typeof fn === "function") {  // registered by the plugin (new DLLs)
+    if (typeof fn === "function") {
       fn("");
     }
   } else if (dhClearTarget === "multi") {
     const fn = window.clearQuestsRequested;
-    if (typeof fn === "function") {  // registered by the plugin (new DLLs)
+    if (typeof fn === "function") {
       fn(dhClearIds.join(","));
     }
   } else {
@@ -2816,6 +2815,227 @@ function dhConfirmClear() {
       fn(String(dhClearTarget));
     }
   }
+}
+
+/* ======== Note History (v1.4.0) ==========================================
+ * Independent metadata/body channels. The native side owns title/body search;
+ * this view owns selection, lazy body display, and per-tab reading state. */
+const nhNotes = [];
+const nhBodies = new Map();
+let nhSelectedId = 0;
+let nhSearchTerm = "";
+let nhSavedBodyScroll = 0;
+let nhSavedListScroll = 0;
+
+function nhNormalizeItem(raw) {
+  raw = dhParse(raw, null);
+  if (!raw || typeof raw !== "object" || typeof raw.id !== "number" || !isFinite(raw.id) || raw.id <= 0) {
+    return null;
+  }
+  return {
+    id: raw.id,
+    title: typeof raw.title === "string" && raw.title ? raw.title : "Untitled note",
+    sequence: typeof raw.sequence === "number" ? raw.sequence : 0
+  };
+}
+
+function nhById(id) {
+  for (const note of nhNotes) {
+    if (note.id === id) {
+      return note;
+    }
+  }
+  return null;
+}
+
+function nhSaveScroll() {
+  const body = document.getElementById("notedetail");
+  const list = document.getElementById("notelist");
+  if (body) {
+    nhSavedBodyScroll = body.scrollTop;
+  }
+  if (list) {
+    nhSavedListScroll = list.scrollTop;
+  }
+}
+
+function nhFormatEncounter(first) {
+  if (!first || typeof first !== "object") {
+    return "";
+  }
+  const pad = function (v) { return String(v || 0).padStart(2, "0"); };
+  const year = typeof first.year === "number" ? first.year : 0;
+  const kind = first.kind === "pickup" ? "First picked up" : "First read";
+  return kind + ": " + year + "-" + pad(first.month) + "-" + pad(first.day)
+    + " " + pad(first.hour) + ":" + pad(first.minute)
+    + (typeof first.location === "string" && first.location ? " — " + first.location : "");
+}
+
+function nhRenderList() {
+  const list = document.getElementById("notelist");
+  if (!list) {
+    return;
+  }
+  while (list.firstChild) {
+    list.removeChild(list.firstChild);
+  }
+  for (const note of nhNotes) {
+    const row = document.createElement("div");
+    row.className = "nentry" + (note.id === nhSelectedId ? " active" : "");
+    row.dataset.id = String(note.id);
+    row.textContent = note.title;
+    row.addEventListener("click", function () { nhSelectNote(note.id); });
+    list.append(row);
+  }
+  const empty = document.getElementById("noteempty");
+  if (empty) {
+    empty.textContent = nhSearchTerm.trim() ? "No matching notes." : "No notes read yet.";
+    empty.style.display = nhNotes.length === 0 ? "" : "none";
+  }
+}
+
+function nhRenderDetail() {
+  const meta = document.getElementById("notemeta");
+  const body = document.getElementById("notebody");
+  if (!meta || !body) {
+    return;
+  }
+  const note = nhById(nhSelectedId);
+  if (!note) {
+    meta.textContent = "Select a note to read.";
+    body.textContent = "";
+    return;
+  }
+  const result = nhBodies.get(note.id);
+  meta.textContent = note.title + (result && result.firstEncounter ? "\n" + nhFormatEncounter(result.firstEncounter) : "");
+  if (!result) {
+    body.textContent = "Loading…";
+    return;
+  }
+  if (result.status === "ready") {
+    body.textContent = result.body || "[No text body]";
+  } else if (result.status === "empty") {
+    body.textContent = "[No text body]";
+  } else if (result.status === "missingPlugin") {
+    body.textContent = "Source plugin missing (" + (result.plugin || "unknown") + "). The note body is unavailable.";
+  } else {
+    body.textContent = "The note body is unavailable.";
+  }
+}
+
+function nhRequestBody(id) {
+  const fn = window.noteBodyRequested;
+  if (typeof fn === "function") {
+    fn(String(id));
+  }
+}
+
+function nhSelectNote(id) {
+  if (!nhById(id)) {
+    return;
+  }
+  nhSaveScroll();
+  nhSelectedId = id;
+  nhSavedBodyScroll = 0;
+  nhRenderList();
+  nhRenderDetail();
+  nhRequestBody(id);
+}
+
+function nhRestorePane() {
+  nhRenderList();
+  nhRenderDetail();
+  const list = document.getElementById("notelist");
+  const body = document.getElementById("notedetail");
+  if (list) {
+    list.scrollTop = nhSavedListScroll;
+  }
+  if (body) {
+    body.scrollTop = nhSavedBodyScroll;
+  }
+}
+
+function setNoteHistory(input) {
+  const parsed = dhParse(input, []);
+  nhNotes.length = 0;
+  if (Array.isArray(parsed)) {
+    for (const raw of parsed) {
+      const note = nhNormalizeItem(raw);
+      if (note) {
+        nhNotes.push(note);
+      }
+    }
+  }
+  if (!nhById(nhSelectedId)) {
+    nhSelectedId = 0;
+    nhSavedBodyScroll = 0;
+  }
+  if (dhPanelNotes()) {
+    nhRenderList();
+    nhRenderDetail();
+  }
+}
+
+function setNoteBody(input) {
+  const result = dhParse(input, null);
+  if (!result || typeof result !== "object" || typeof result.id !== "number" || !isFinite(result.id)) {
+    return;
+  }
+  nhBodies.set(result.id, result);
+  if (result.id === nhSelectedId && dhPanelNotes()) {
+    nhRenderDetail();
+  }
+}
+
+function nhApplySearchTerm(value) {
+  nhSearchTerm = value;
+  const fn = window.noteSearchRequested;
+  if (typeof fn === "function") {
+    fn(value);
+  }
+}
+
+function nhResetFreshOpen() {
+  nhSearchTerm = "";
+  nhSelectedId = 0;
+  nhSavedBodyScroll = 0;
+  nhSavedListScroll = 0;
+  const search = document.getElementById("notesearch");
+  if (search) {
+    search.value = "";
+  }
+  nhApplySearchTerm("");
+}
+
+function nhRowElements() {
+  const list = document.getElementById("notelist");
+  return list ? Array.from(list.children) : [];
+}
+
+function nhMoveSelection(dir) {
+  const rows = nhRowElements();
+  if (rows.length === 0) {
+    return false;
+  }
+  let index = rows.findIndex(function (row) { return Number(row.dataset.id) === nhSelectedId; });
+  if (index < 0) {
+    index = dir > 0 ? -1 : 0;
+  }
+  const next = index + (dir > 0 ? 1 : -1);
+  if (next < 0 || next >= rows.length) {
+    return false;
+  }
+  rows[next].click();
+  const top = rows[next].offsetTop;
+  const list = document.getElementById("notelist");
+  if (list) {
+    if (top < list.scrollTop) {
+      list.scrollTop = top;
+    } else if (top + rows[next].offsetHeight > list.scrollTop + list.clientHeight) {
+      list.scrollTop = top + rows[next].offsetHeight - list.clientHeight;
+    }
+  }
+  return true;
 }
 
 /* C7 — V12 controller actions. PrismaUI delivers bound buttons as the
@@ -2835,17 +3055,17 @@ function dhOnControllerAction(event) {
     return;
   }
   const action = detail.action;
-  const msgs = dhPanelMessages();  // v1.3.0: route to the ACTIVE tab's history
+  const tab = dhActiveTabIndex();
   if (detail.state === "repeat") {
     if (action === "page_up") {
-      if (msgs) {
-        dhFocusPageScroll(-1);  // G6: LB pages the message log
+      if (tab !== 0) {
+        dhFocusPageScroll(-1);
       } else {
-        dhBodySearchPageOrMatch(-1);  // AC6: match walk while a term is active
+        dhBodySearchPageOrMatch(-1);
       }
     } else if (action === "page_down") {
-      if (msgs) {
-        dhFocusPageScroll(1);  // G6: RB pages the message log
+      if (tab !== 0) {
+        dhFocusPageScroll(1);
       } else {
         dhBodySearchPageOrMatch(1);
       }
@@ -2853,29 +3073,27 @@ function dhOnControllerAction(event) {
     return;
   }
   if (detail.state !== "pressed") {
-    return;  // "released" (and anything unknown) is ignored
+    return;
   }
   if (action === "clear_quest") {
-    // G6: X has NO quest action on Message History (dialogue branch frozen).
-    if (msgs || dhOverlayVisible() || dhSelectedQuests.size === 0) {
-      return;  // messages tab: inert; dialogue: already confirming, or no quest scope
+    if (tab !== 0 || dhOverlayVisible() || dhSelectedQuests.size === 0) {
+      return;
     }
     dhShowClearOverlay();
   } else if (action === "clear_all") {
     if (dhOverlayVisible()) {
       return;
     }
-    // G6: Y confirms a MESSAGE-only clear on the messages tab.
-    dhShowClearOverlay(msgs ? "messages" : "all");
+    dhShowClearOverlay(tab === 2 ? "notes" : tab === 1 ? "messages" : "all");
   } else if (action === "page_up") {
-    if (msgs) {
-      dhFocusPageScroll(-1);  // G6: LB pages the message log
+    if (tab !== 0) {
+      dhFocusPageScroll(-1);
     } else {
-      dhBodySearchPageOrMatch(-1);  // AC6: match walk while a term is active
+      dhBodySearchPageOrMatch(-1);
     }
   } else if (action === "page_down") {
-    if (msgs) {
-      dhFocusPageScroll(1);  // G6: RB pages the message log
+    if (tab !== 0) {
+      dhFocusPageScroll(1);
     } else {
       dhBodySearchPageOrMatch(1);
     }
@@ -2889,7 +3107,7 @@ function dhOnControllerAction(event) {
     // there would blur it (search Enter semantics), so A stays inert.
     const active = document.activeElement;
     if (active && (active.id === "search" || active.id === "bodysearch"
-        || active.id === "fontnum")) {
+        || active.id === "msgsearch" || active.id === "notesearch" || active.id === "fontnum")) {
       return;
     }
     dhFocusActivate();
@@ -2935,6 +3153,7 @@ const dhFocusZoneOrder = ["search", "filters", "quests", "bodysearch", "log", "c
 /* Message History content zones: search -> log -> Clear. Dialogue's six-zone
  * order remains unchanged. */
 const dhFocusMsgZoneOrder = ["msgsearch", "log", "clear"];
+const dhFocusNoteZoneOrder = ["notesearch", "notelist", "notebody", "clear"];
 
 /* Per-zone position: filters = checkbox index (dhBuckets order), quests =
  * visible row index; roving — a zone remembers its position across
@@ -2999,33 +3218,40 @@ function dhFocusTarget() {
   if (dhFocusZone === "msgsearch") {
     return document.getElementById("msgsearch");
   }
+  if (dhFocusZone === "notesearch") {
+    return document.getElementById("notesearch");
+  }
+  if (dhFocusZone === "notelist") {
+    const selected = nhById(nhSelectedId);
+    const rows = nhRowElements();
+    for (const row of rows) {
+      if (selected && Number(row.dataset.id) === selected.id) {
+        return row;
+      }
+    }
+    return rows.length > 0 ? rows[0] : document.getElementById("notelist");
+  }
+  if (dhFocusZone === "notebody") {
+    return document.getElementById("notedetail");
+  }
   if (dhFocusZone === "prefs") {
-    return dhPrefsTarget();  // 2026-10-24 header cluster (ruling V1)
+    return dhPrefsTarget();
   }
   if (dhFocusZone === "tabs") {
-    // v1.3.0 strip: resolves the focused tab button (null in legacy worlds
-    // without the tabstrip markup).
     const tabs = dhTabElements();
     if (!tabs) {
       return null;
     }
-    const i = dhFocusPos.tabs === 1 ? 1 : 0;
-    dhFocusPos.tabs = i;  // adopt the clamp
+    const i = Math.max(0, Math.min(tabs.length - 1, dhFocusPos.tabs));
+    dhFocusPos.tabs = i;
     return tabs[i];
   }
   if (dhFocusZone === "log") {
-    // v1.3.0: the log zone resolves to the ACTIVE tab's scroll element.
     return dhActiveLogElement();
   }
   return document.getElementById("clear");
 }
 
-/* Move the visible indicator to whatever dhFocusTarget resolves: strip
- * the class from the previous marks (detached rows are harmless no-ops)
- * and add it to the new target. Real DOM focus only accompanies the text
- * zones (#search, #bodysearch, #msgsearch, #fontnum — so typing works);
- * leaving one blurs, so typed text can't land in a box while another zone
- * owns the model. */
 function dhFocusApply() {
   for (const el of dhFocusMarked) {
     el.classList.remove("dh-focus");
@@ -3038,28 +3264,23 @@ function dhFocusApply() {
   }
   const active = document.activeElement;
   const textBox = active && (active.id === "search" || active.id === "bodysearch"
-    || active.id === "msgsearch" || active.id === "fontnum");
+    || active.id === "msgsearch" || active.id === "notesearch" || active.id === "fontnum");
   if (textBox && (!el || el !== active)) {
     active.blur();
   }
   if (el && (el.id === "search" || el.id === "bodysearch" || el.id === "msgsearch"
-      || el.id === "fontnum") && dhFocusOverlay < 0 && typeof el.focus === "function") {
+      || el.id === "notesearch" || el.id === "fontnum") && dhFocusOverlay < 0 && typeof el.focus === "function") {
     el.focus();
   }
 }
 
-/* Enter a zone at its roving position and show the indicator. */
 function dhFocusSetZone(zone) {
   dhFocusZone = zone;
   dhFocusApply();
 }
 
-/* C7 surface — Left/Right zone cycle (D2): prev/next in the ACTIVE tab's
- * zone order, cyclic wrap. dir < 0 = prev, > 0 = next. The strip and prefs
- * cluster live OUTSIDE the cycle (2026-10-24 ruling V1 precedent; the six-
- * zone dialogue order is frozen by the c6 harness). */
 function dhActiveZoneOrder() {
-  return dhPanelMessages() ? dhFocusMsgZoneOrder : dhFocusZoneOrder;
+  return dhPanelNotes() ? dhFocusNoteZoneOrder : dhPanelMessages() ? dhFocusMsgZoneOrder : dhFocusZoneOrder;
 }
 
 function dhFocusCycleZone(dir) {
@@ -3150,17 +3371,23 @@ function dhFocusReacquireQuest(key) {
  * state on Message History. With a single pane (legacy worlds) this is
  * byte-identical to the pre-feature behavior. */
 function dhActiveLogElement() {
-  return document.getElementById(dhPanelMessages() ? "msglog" : "log");
+  return document.getElementById(dhPanelNotes() ? "notedetail" : dhPanelMessages() ? "msglog" : "log");
 }
 
 function dhActiveBlockTotal() {
+  if (dhPanelNotes()) {
+    const detail = document.getElementById("notedetail");
+    return detail ? detail.scrollHeight : 0;
+  }
   return dhPanelMessages() ? mhBlockLayout().total : dhBlockLayout().total;
 }
 
 function dhLogLineStepPx() {
-  return dhPanelMessages()
-    ? mhBlockLayout().est / kMsgBlockRows
-    : dhBlockLayout().est / kBlockRows;
+  return dhPanelNotes()
+    ? 23
+    : dhPanelMessages()
+      ? mhBlockLayout().est / kMsgBlockRows
+      : dhBlockLayout().est / kBlockRows;
 }
 
 function dhLogScrollLines(delta) {
@@ -3233,25 +3460,20 @@ function dhFocusMove(dir) {
     dhFocusApply();
     return true;
   }
-  if (dhFocusZone === "log") {
-    // Dialogue always scrolls. On Message History, Up returns to the search
-    // box above the log instead of cycling or scrolling past the first row.
+  if (dhFocusZone === "notelist") {
+    return nhMoveSelection(dir);
+  }
+  if (dhFocusZone === "log" || dhFocusZone === "notebody") {
     if (dir < 0 && dhPanelMessages() && dhHasTabs()) {
       dhFocusSetZone("msgsearch");
       return true;
     }
-    dhLogScrollLines(dir < 0 ? -1 : 1);  // D4: always scroll, never cycle
+    dhLogScrollLines(dir < 0 ? -1 : 1);
     return true;
   }
-  return false;  // search / bodysearch / filters / clear: no vertical within — edges fall through
+  return false;
 }
 
-/* C7 surface — Enter/Space activation. Every path delegates to the
- * element's own wired handler: row.click() for quest rows (D8 — the
- * dhMakeEntry click closure is the single selection code path; a plain
- * synthetic click carries no Ctrl modifier), checkbox.click() for
- * filters (fires the existing change listeners), and the overlay/clear
- * functions directly (they ARE the click handlers). */
 function dhFocusActivate() {
   if (dhFocusOverlay >= 0) {
     if (dhFocusOverlay === 0) {
@@ -3262,7 +3484,7 @@ function dhFocusActivate() {
     return true;
   }
   if (dhFocusZone === "search") {
-    dhFocusSetZone("quests");  // contract §3: Enter moves to the quest index
+    dhFocusSetZone("quests");
     return true;
   }
   if (dhFocusZone === "filters") {
@@ -3276,41 +3498,48 @@ function dhFocusActivate() {
   if (dhFocusZone === "quests") {
     const row = dhFocusTarget();
     if (row) {
-      const key = row.dataset.key;  // rows rebuild on click — refocus by key
+      const key = row.dataset.key;
       row.click();
       dhFocusReacquireQuest(key);
       return true;
     }
     return false;
   }
+  if (dhFocusZone === "notesearch") {
+    dhFocusSetZone("notelist");
+    return true;
+  }
+  if (dhFocusZone === "notelist") {
+    const row = dhFocusTarget();
+    if (row && row.dataset.id) {
+      row.click();
+      return true;
+    }
+    return false;
+  }
   if (dhFocusZone === "bodysearch" || dhFocusZone === "msgsearch") {
-    return true;  // text input owns Enter/Space; filtering needs no activation
+    return true;
   }
   if (dhFocusZone === "prefs") {
     if (dhFocusPos.prefs === 2) {
       const box = document.getElementById("pausebox");
       if (box) {
-        box.click();  // ruling V4: Enter/Space toggle via the change path
+        box.click();
         return true;
       }
     }
-    return true;  // slider: inert; numeric: its own keydown owns Enter
+    return true;
   }
   if (dhFocusZone === "tabs") {
-    // v1.3.0: the roving tab is the active tab after every Left/Right
-    // switch, so Enter is normally inert; commit defensively if the two
-    // ever diverge.
     if (dhFocusPos.tabs !== dhActiveTabIndex()) {
       dhActivateTab(dhFocusPos.tabs);
     }
     return true;
   }
-  if (dhFocusZone === "log") {
-    return false;  // nothing to activate
+  if (dhFocusZone === "log" || dhFocusZone === "notebody") {
+    return false;
   }
-  // clear button — the existing confirm flow, scoped to the ACTIVE tab
-  // (v1.3.0: messages mode clears message history only).
-  dhShowClearOverlay(dhPanelMessages() ? "messages" : undefined);
+  dhShowClearOverlay(dhPanelNotes() ? "notes" : dhPanelMessages() ? "messages" : undefined);
   return true;
 }
 
@@ -3335,8 +3564,8 @@ function dhFocusOnKey(event) {
   }
   if (space && event.target
       && (event.target.id === "search" || event.target.id === "bodysearch"
-        || event.target.id === "msgsearch" || event.target.id === "fontnum")) {
-    return false;  // a typed character while a text box owns the real focus
+        || event.target.id === "msgsearch" || event.target.id === "notesearch" || event.target.id === "fontnum")) {
+    return false;
   }
   if (dhFocusOverlay >= 0) {
     if (up || down || left || right) {
@@ -3347,35 +3576,33 @@ function dhFocusOnKey(event) {
       event.preventDefault();
       dhFocusActivate();
     } else {
-      event.preventDefault();  // Space/PageUp-Down must not act natively
+      event.preventDefault();
     }
     return true;
   }
   if (left || right) {
     if (dhFocusZone === "tabs") {
-      // v1.3.0 design §6.1: on the focused strip Left/Right selects the
-      // adjacent tab and KEEPS focus on the strip (two tabs: either
-      // direction selects the other one).
       event.preventDefault();
-      dhActivateTab(1 - dhActiveTabIndex());
+      const tabs = dhTabElements();
+      const dir = right ? 1 : -1;
+      dhActivateTab((dhActiveTabIndex() + dir + tabs.length) % tabs.length);
       return true;
     }
     if (dhFocusZone === "prefs") {
-      dhPrefsHorizontal(right ? 1 : -1, event);  // ruling V4 — never zone-cycles
+      dhPrefsHorizontal(right ? 1 : -1, event);
       return true;
     }
-    if (dhFocusZone === "search" || dhFocusZone === "bodysearch" || dhFocusZone === "msgsearch") {
+    if (dhFocusZone === "search" || dhFocusZone === "bodysearch" || dhFocusZone === "msgsearch" || dhFocusZone === "notesearch") {
       const box = document.getElementById(dhFocusZone);
       if (box && !box.value) {
-        // Empty box: Left/Right leave the zone; a nonempty box keeps caret keys.
         event.preventDefault();
         dhFocusCycleZone(right ? 1 : -1);
       }
-      return true;  // caret keys — no preventDefault, default caret move
+      return true;
     }
     event.preventDefault();
     if (dhFocusZone === "filters") {
-      dhFocusStepFilter(right ? 1 : -1);  // D5: wrap among the 4 checkboxes
+      dhFocusStepFilter(right ? 1 : -1);
       return true;
     }
     dhFocusCycleZone(right ? 1 : -1);
@@ -3385,27 +3612,27 @@ function dhFocusOnKey(event) {
     event.preventDefault();
     const dir = up ? -1 : 1;
     if (dhFocusZone === "tabs") {
-      // Down enters the active tab's first content zone; Up enters preferences.
-      dhFocusSetZone(dir > 0 ? (dhPanelMessages() ? "msgsearch" : "search") : "prefs");
+      dhFocusSetZone(dir > 0 ? (dhPanelNotes() ? "notesearch" : dhPanelMessages() ? "msgsearch" : "search") : "prefs");
       return true;
     }
     if (dhFocusZone === "prefs") {
-      dhPrefsMove(dir);  // ruling V4 — steps within the cluster, exits to clear
+      dhPrefsMove(dir);
       return true;
     }
     if (dhFocusZone === "search") {
-      // D3 adjacent, both directions — with the v1.3.0 tab strip (real
-      // markup) Up returns to the strip per design §6.1; legacy worlds
-      // without the tabstrip keep the frozen search<->filters adjacency.
       dhFocusSetZone((up && dhHasTabs()) ? "tabs" : "filters");
       return true;
     }
     if (dhFocusZone === "bodysearch") {
-      dhFocusSetZone("log");  // spec §6.1: Up/Down leave the box for the log
+      dhFocusSetZone("log");
       return true;
     }
     if (dhFocusZone === "msgsearch") {
       dhFocusSetZone(dir > 0 ? "log" : "tabs");
+      return true;
+    }
+    if (dhFocusZone === "notesearch") {
+      dhFocusSetZone(dir > 0 ? "notelist" : "tabs");
       return true;
     }
     if (up && dhFocusZone === "clear") {
@@ -3489,6 +3716,21 @@ function dhFocusSyncFromClick(event) {
       dhFocusApply();
       return;
     }
+    if (id === "notesearch") {
+      dhFocusZone = "notesearch";
+      dhFocusApply();
+      return;
+    }
+    if (node.classList && node.classList.contains("nentry")) {
+      dhFocusZone = "notelist";
+      dhFocusApply();
+      return;
+    }
+    if (id === "notedetail" || id === "notebody") {
+      dhFocusZone = "notebody";
+      dhFocusApply();
+      return;
+    }
     if (id && id.indexOf("ftype-") === 0) {
       dhFocusZone = "filters";
       const b = dhBuckets.indexOf(id.slice(6));
@@ -3522,9 +3764,9 @@ function dhFocusSyncFromClick(event) {
     }
     /* v1.3.0: tab buttons map to the strip zone; the message log/rows map to
      * the active log's zone (messages mode). */
-    if (id === "tabdialogue" || id === "tabmessage") {
+    if (id === "tabdialogue" || id === "tabmessage" || id === "tabnote") {
       dhFocusZone = "tabs";
-      dhFocusPos.tabs = id === "tabdialogue" ? 0 : 1;
+      dhFocusPos.tabs = id === "tabdialogue" ? 0 : id === "tabmessage" ? 1 : 2;
       dhFocusApply();
       return;
     }
@@ -3636,6 +3878,17 @@ document.addEventListener("DOMContentLoaded", () => {
     msgSearch.addEventListener("input", function () { mhApplySearchTerm(msgSearch.value); });
     dhWireTypingEmit(msgSearch);
   }
+  const noteSearch = document.getElementById("notesearch");
+  if (noteSearch) {
+    let noteSearchTimer = null;
+    noteSearch.addEventListener("input", function () {
+      if (noteSearchTimer) {
+        clearTimeout(noteSearchTimer);
+      }
+      noteSearchTimer = setTimeout(function () { nhApplySearchTerm(noteSearch.value); }, 200);
+    });
+    dhWireTypingEmit(noteSearch);
+  }
   const bodySearchPrev = document.getElementById("bodysearchprev");
   if (bodySearchPrev) {
     bodySearchPrev.addEventListener("click", dhBodySearchPrev);  // ‹ = older
@@ -3732,17 +3985,17 @@ document.addEventListener("DOMContentLoaded", () => {
   if (tabMessage) {
     tabMessage.addEventListener("click", function () { dhActivateTab(1); });
   }
+  const tabNote = document.getElementById("tabnote");
+  if (tabNote) {
+    tabNote.addEventListener("click", function () { dhActivateTab(2); });
+  }
   const clearBtn = document.getElementById("clear");
   if (clearBtn) {
-    // The header is the panel drag handle: keep this mousedown from
-    // bubbling into dhStartDrag ("move"), which would also fire a
-    // spurious geometryChanged on mouseup.
     clearBtn.addEventListener("mousedown", function (event) {
       event.stopPropagation();
     });
-    // v1.3.0: the shared Clear button scopes to the ACTIVE tab.
     clearBtn.addEventListener("click", function () {
-      dhShowClearOverlay(dhPanelMessages() ? "messages" : undefined);
+      dhShowClearOverlay(dhPanelNotes() ? "notes" : dhPanelMessages() ? "messages" : undefined);
     });
   }
   const overlayConfirm = document.getElementById("overlayconfirm");
@@ -3781,6 +4034,11 @@ document.addEventListener("DOMContentLoaded", () => {
         mhApplySearchTerm("");
         return;
       }
+      if (target && target.id === "notesearch" && target.value) {
+        target.value = "";
+        nhApplySearchTerm("");
+        return;
+      }
       if (target && target.id === "search" && target.value) {
         target.value = "";  // symmetric clear for the quest-name box
         dhRenderIndex();
@@ -3792,8 +4050,8 @@ document.addEventListener("DOMContentLoaded", () => {
         dhFocusSetZone("clear");  // leave prefs back to the entry zone
         return;
       }
-      if (target && (target.id === "search" || target.id === "bodysearch" || target.id === "msgsearch")) {
-        dhFocusSetZone(target.id === "search" ? "filters" : "log");  // blurs the box
+      if (target && (target.id === "search" || target.id === "bodysearch" || target.id === "msgsearch" || target.id === "notesearch")) {
+        dhFocusSetZone(target.id === "search" ? "filters" : target.id === "notesearch" ? "notelist" : "log");
         return;
       }
       dhSend("closeRequested");
