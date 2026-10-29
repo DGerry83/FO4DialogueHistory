@@ -242,7 +242,7 @@ namespace F4DH::Core
 		if (a_identity.sourceRefFormID != 0 || a_identity.runtimeUniqueID != 0) return -1;
 		for (std::size_t i = 0; i < _records.size(); ++i) {
 			const auto& record = _records[i];
-			if (record.identity.kind == NoteIdentityKind::DynamicSynthetic &&
+			if ((record.identity.kind == NoteIdentityKind::DynamicSynthetic || record.identity.kind == NoteIdentityKind::DynamicReference) &&
 				record.identity.baseFormID == a_identity.baseFormID && record.cachedBody == a_body) {
 				return static_cast<std::int32_t>(i);
 			}

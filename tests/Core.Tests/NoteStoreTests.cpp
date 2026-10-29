@@ -87,6 +87,35 @@ TEST_CASE("note dynamic references remain separate by source reference")
 	REQUIRE(store.VisibleSnapshot()[1].cachedBody == "second body");
 }
 
+TEST_CASE("note world read pickup and inventory read preserve one dynamic entry")
+{
+	NoteStore store;
+	auto world = Identity(0x1000, NoteIdentityKind::DynamicReference);
+	world.sourceRefFormID = 0xFF000001;
+	const std::string title = "Super Mutants in Trinity Plaza!";
+	const std::string body = "Super Mutants have been spotted in Trinity Plaza.";
+	const auto first = store.ObserveRead(world, title, body, NoteBodyMode::CachedResolved, Encounter(EncounterKind::Read));
+	const auto folder = store.CreateFolder(0, "Quest notes");
+	(void)store.AssignNote(first.entryId, folder.id);
+
+	auto pickup = world;
+	pickup.runtimeUniqueID = 3;
+	(void)store.ObservePickup(pickup, "Super Mutants in <Alias=Dungeon>!", Encounter(EncounterKind::Pickup, 11));
+	const auto inventory = Identity(0x1000, NoteIdentityKind::DynamicSynthetic);
+	const auto second = store.ObserveRead(inventory, "Super Mutants in <Alias=Dungeon>!", body, NoteBodyMode::CachedResolved, Encounter(EncounterKind::Read, 12));
+
+	REQUIRE(second.entryId == first.entryId);
+	REQUIRE(!second.visibleChanged);
+	REQUIRE(store.Size() == 1);
+	const auto record = store.Find(first.entryId);
+	REQUIRE(record->title == title);
+	REQUIRE(record->firstEncounter->kind == EncounterKind::Read);
+	REQUIRE(record->firstEncounter->timestamp.hour == 9);
+	REQUIRE(record->firstReadSequence == 1);
+	REQUIRE(record->folderId == folder.id);
+	REQUIRE(record->cachedBody == body);
+}
+
 TEST_CASE("note synthetic instances with different resolved bodies do not merge")
 {
 	NoteStore store;
