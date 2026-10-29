@@ -154,6 +154,7 @@ namespace F4DH::Application
 	void ViewController::OnNoteFolderCreate(std::uint64_t parentFolderId, const std::string& name)
 	{
 		const auto result = _noteStore.CreateFolder(parentFolderId, name);
+		_logger.Info(std::format("note folder create: ok={} id={} message={}", result.ok, result.id, result.message));
 		_bridge.PushNoteOperationResult(Core::NotePayloadBuilder::BuildOperationResult(result));
 		PushNoteSnapshot();
 	}

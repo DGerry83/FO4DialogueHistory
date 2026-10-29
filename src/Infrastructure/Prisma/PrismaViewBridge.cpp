@@ -161,6 +161,7 @@ namespace F4DH::Infrastructure
 		void OnNoteFolderCreateRequested(const char* a_payload)
 		{
 			const std::string payload = a_payload ? a_payload : "";
+			REX::LogInformation("PrismaViewBridge: noteFolderCreateRequested received from view ({} byte payload)", payload.size());
 			const auto newline = payload.find('\n');
 			if (newline == std::string::npos || newline + 1 >= payload.size()) return;
 			std::uint64_t parentId = 0;

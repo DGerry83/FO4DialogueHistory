@@ -2978,10 +2978,13 @@ function nhRenderChildren(list, parentId, depth) {
       nhRenderChildren(list, folder.id, depth + 1);
     }
   }
-  const notes = nhNotes.filter(function (note) { return note.folderId === parentId; });
-  notes.sort(function (a, b) { return a.sequence - b.sequence; });
-  for (const note of notes) {
-    list.append(nhMakeNoteRow(note, depth));
+  if (parentId !== 0 || nhExpanded.has(0) || nhSearchTerm.trim() !== "") {
+    const notes = nhNotes.filter(function (note) { return note.folderId === parentId; });
+    notes.sort(function (a, b) { return a.sequence - b.sequence; });
+    const noteDepth = parentId === 0 ? depth + 1 : depth;
+    for (const note of notes) {
+      list.append(nhMakeNoteRow(note, noteDepth));
+    }
   }
 }
 
@@ -3136,7 +3139,7 @@ function setNoteHistory(input) {
     });
   }
   for (const id of Array.from(nhExpanded)) {
-    if (!nhFolderById(id)) {
+    if (id !== 0 && !nhFolderById(id)) {
       nhExpanded.delete(id);
     }
   }
