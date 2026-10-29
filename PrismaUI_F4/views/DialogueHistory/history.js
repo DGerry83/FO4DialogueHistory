@@ -2835,8 +2835,8 @@ function dhConfirmClear() {
 const nhNotes = [];
 const nhBodies = new Map();
 const nhFolders = [];
-const nhExpanded = new Set();
-let nhSelectedFolderId = 0;
+const nhExpanded = new Set([0]);
+let nhSelectedFolderId = -1;
 let nhSelectedId = 0;
 let nhSearchTerm = "";
 let nhSavedBodyScroll = 0;
@@ -2910,7 +2910,7 @@ function nhSetNotice(text) {
 
 function nhMakeFolderRow(folder, depth) {
   const row = document.createElement("div");
-  row.className = "nfolder";
+  row.className = "nfolder" + (folder.id === nhSelectedFolderId ? " selected" : "");
   row.dataset.folderId = String(folder.id);
   row.style.paddingLeft = (8 + depth * 14) + "px";
   const expanded = nhExpanded.has(folder.id) || nhSearchTerm.trim() !== "";
@@ -2969,6 +2969,17 @@ function nhMakeNoteRow(note, depth) {
   return row;
 }
 
+function nhRenderNotes(list, parentId, depth) {
+  if (parentId === 0 && !nhExpanded.has(0) && nhSearchTerm.trim() === "") {
+    return;
+  }
+  const notes = nhNotes.filter(function (note) { return note.folderId === parentId; });
+  notes.sort(function (a, b) { return a.sequence - b.sequence; });
+  for (const note of notes) {
+    list.append(nhMakeNoteRow(note, depth));
+  }
+}
+
 function nhRenderChildren(list, parentId, depth) {
   const folders = nhFolders.filter(function (folder) { return folder.parentFolderId === parentId; });
   folders.sort(function (a, b) { return a.ordinal - b.ordinal; });
@@ -2978,13 +2989,8 @@ function nhRenderChildren(list, parentId, depth) {
       nhRenderChildren(list, folder.id, depth + 1);
     }
   }
-  if (parentId !== 0 || nhExpanded.has(0) || nhSearchTerm.trim() !== "") {
-    const notes = nhNotes.filter(function (note) { return note.folderId === parentId; });
-    notes.sort(function (a, b) { return a.sequence - b.sequence; });
-    const noteDepth = parentId === 0 ? depth + 1 : depth;
-    for (const note of notes) {
-      list.append(nhMakeNoteRow(note, noteDepth));
-    }
+  if (parentId !== 0) {
+    nhRenderNotes(list, parentId, depth);
   }
 }
 
@@ -2993,12 +2999,19 @@ function nhRenderList() {
   if (!list) {
     return;
   }
+  list.onclick = function (event) {
+    if (event.target === list) {
+      nhSelectedFolderId = -1;
+      nhRenderList();
+    }
+  };
   while (list.firstChild) {
     list.removeChild(list.firstChild);
   }
+  nhRenderChildren(list, 0, 0);
   const unfiled = { id: 0, parentFolderId: 0, name: "Unfiled", ordinal: 0 };
   list.append(nhMakeFolderRow(unfiled, 0));
-  nhRenderChildren(list, 0, 0);
+  nhRenderNotes(list, 0, 1);
   const empty = document.getElementById("noteempty");
   if (empty) {
     empty.textContent = nhSearchTerm.trim() ? "No matching notes." : "No notes read yet.";
@@ -3012,7 +3025,8 @@ function nhCreateFolder() {
   if (!input || typeof fn !== "function") {
     return;
   }
-  fn(nhSelectedFolderId + "\n" + input.value);
+  const parentId = nhSelectedFolderId > 0 ? nhSelectedFolderId : 0;
+  fn(parentId + "\n" + input.value);
 }
 
 function nhStartMove() {
@@ -3143,8 +3157,8 @@ function setNoteHistory(input) {
       nhExpanded.delete(id);
     }
   }
-  if (!nhFolderById(nhSelectedFolderId)) {
-    nhSelectedFolderId = 0;
+  if (nhSelectedFolderId > 0 && !nhFolderById(nhSelectedFolderId)) {
+    nhSelectedFolderId = -1;
   }
   if (!nhById(nhSelectedId)) {
     nhSelectedId = 0;
@@ -3185,7 +3199,7 @@ function nhApplySearchTerm(value) {
 function nhResetFreshOpen() {
   nhSearchTerm = "";
   nhSelectedId = 0;
-  nhSelectedFolderId = 0;
+  nhSelectedFolderId = -1;
   nhMoveId = 0;
   nhDragId = 0;
   nhSavedBodyScroll = 0;

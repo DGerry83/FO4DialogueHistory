@@ -770,6 +770,10 @@ html, body {
 .nfolder.drop-target {
   background: rgba(43, 91, 43, 0.55);
 }
+.nfolder.selected {
+  background: rgba(43, 91, 43, 0.45);
+  box-shadow: inset 3px 0 #D7FFD7;
+}
 .nfolder.dh-focus,
 .nentry.dh-focus,
 #notecreate.dh-focus,
