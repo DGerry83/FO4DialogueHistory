@@ -58,6 +58,7 @@ namespace F4DH::Infrastructure::Notes
 	// reference-parent description routes stay disabled.
 	namespace NoteRecordResolver
 	{
+		void CaptureReadTitleHint(const ReadObservation& a_obs);
 		void LogReadObservation(const ReadObservation& a_obs, Core::ILogger& a_log);
 		void LogTransferObservation(const TransferObservation& a_obs, Core::ILogger& a_log);
 		void LogPreparedBookText(PreparedTextObservation a_obs, Core::ILogger& a_log);

@@ -2,6 +2,7 @@
 
 #include "Core/ILogger.h"
 #include "Core/Note/NoteTextFormatter.h"
+#include "Core/Note/NoteMetadata.h"
 
 #include "RE/B/BGSKeyword.hpp"
 #include "RE/B/BGSLocation.hpp"
@@ -314,7 +315,7 @@ namespace
 		F4DH::Core::EncounterMetadata encounter;
 		encounter.kind = a_kind;
 		if (const auto* calendar = RE::Calendar::GetSingleton()) {
-			encounter.timestamp.year = static_cast<std::int32_t>(calendar->GetYear());
+			encounter.timestamp.year = F4DH::Core::DisplayGameYear(static_cast<std::int32_t>(calendar->GetYear()));
 			encounter.timestamp.month = static_cast<std::uint8_t>(static_cast<unsigned>(calendar->GetMonth()));
 			encounter.timestamp.day = static_cast<std::uint8_t>(static_cast<unsigned>(calendar->GetDay()));
 			encounter.timestamp.hour = static_cast<std::uint8_t>(calendar->GetHour().count());
@@ -338,13 +339,27 @@ namespace
 		return identity;
 	}
 
+	struct ReadTitleHint
+	{
+		std::uint32_t baseFormID{ 0 };
+		std::string title;
+	};
+
+	ReadTitleHint g_readTitleHint;
+
 	std::string TitleFor(const RE::TESObjectBOOK& a_book, const RE::TESObjectREFR* a_refr)
 	{
 		if (a_refr) {
 			const auto display = RE::TESFullName::GetFormFullOrDisplayName(a_refr);
 			if (display && display->data() && display->data()[0] != '\0') return display->data();
 		}
-		return Safe(a_book.GetFullName());
+		auto title = Safe(a_book.GetFullName());
+		if (!a_refr && g_readTitleHint.baseFormID == a_book.formID &&
+			F4DH::Core::NoteTextFormatter::ContainsUnresolvedAlias(title) &&
+			!F4DH::Core::NoteTextFormatter::ContainsUnresolvedAlias(g_readTitleHint.title)) {
+			title = g_readTitleHint.title;
+		}
+		return title;
 	}
 
 	bool HasRawAlias(const RE::TESObjectBOOK& a_book)
@@ -357,6 +372,18 @@ namespace
 
 namespace F4DH::Infrastructure::Notes
 {
+	void NoteRecordResolver::CaptureReadTitleHint(const ReadObservation& a_obs)
+	{
+		g_readTitleHint = {};
+		const auto* refr = ResolveReference(a_obs.bookRefFormID);
+		if (!refr) return;
+		const auto* base = refr->GetBaseObject();
+		if (!base || !base->Is(RE::FormType::kBook)) return;
+		const auto* book = static_cast<const RE::TESObjectBOOK*>(base);
+		g_readTitleHint.baseFormID = book->formID;
+		g_readTitleHint.title = TitleFor(*book, refr);
+	}
+
 	void NoteRecordResolver::LogReadObservation(const ReadObservation& a_obs, Core::ILogger& a_log)
 	{
 		LogFirstTaskThreadOnce(a_log);

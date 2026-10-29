@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Core/Note/NoteClassifier.h"
+#include "Core/Note/NoteMetadata.h"
 #include "Core/Note/NoteTextFormatter.h"
 #include "Core/Note/NoteTitleGenerator.h"
 
@@ -78,4 +79,17 @@ TEST_CASE("note title matching is case-insensitive")
 {
 	REQUIRE(NoteTitleGenerator::Generate("note", "body", {}) == "note: body");
 	REQUIRE(NoteTitleGenerator::Generate("Dead Drop Note", "body", { "dead drop note" }) == "Dead Drop Note: body");
+}
+
+TEST_CASE("note title never exposes an unresolved alias")
+{
+	const auto title = NoteTitleGenerator::Generate("Super Mutants in <Alias=Dungeon>!", "Open notice to anyone", {});
+	REQUIRE(title == "Note: Open notice to anyone");
+	REQUIRE(title.find("<Alias=") == std::string::npos);
+}
+
+TEST_CASE("note display year includes the 2000 epoch")
+{
+	REQUIRE(DisplayGameYear(288) == 2288);
+	REQUIRE(DisplayGameYear(287) == 2287);
 }

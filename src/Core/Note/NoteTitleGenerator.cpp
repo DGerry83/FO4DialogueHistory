@@ -58,8 +58,9 @@ namespace F4DH::Core
 		const std::vector<std::string>& a_existingTitles,
 		const std::vector<std::string>& a_genericTitles)
 	{
-		const std::string base = a_originalTitle.empty() ? "Untitled note" : std::string(a_originalTitle);
-		const bool generic = Contains(a_genericTitles, base);
+		const bool rawAlias = NoteTextFormatter::ContainsUnresolvedAlias(a_originalTitle);
+		const std::string base = rawAlias ? "Note" : a_originalTitle.empty() ? "Untitled note" : std::string(a_originalTitle);
+		const bool generic = rawAlias || Contains(a_genericTitles, base);
 		std::string candidate = base;
 		if (generic || Contains(a_existingTitles, candidate)) {
 			const auto opening = Opening(a_plainBody);

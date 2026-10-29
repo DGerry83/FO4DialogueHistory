@@ -55,7 +55,7 @@ namespace F4DH::Infrastructure
 
 	RE::BSEventNotifyControl NoteEventSink::ProcessEvent(const RE::TESBookReadEvent& a_event, RE::BSTEventSource<RE::TESBookReadEvent>*)
 	{
-		if (!_verbose) return RE::BSEventNotifyControl::kContinue;
+		if (!_verbose && !_sink) return RE::BSEventNotifyControl::kContinue;
 
 		Notes::ReadObservation obs;
 		obs.seq = NextSeq();
@@ -65,7 +65,8 @@ namespace F4DH::Infrastructure
 		obs.uniqueID = a_event.uniqueID;
 
 		g_taskInterface->AddTask([this, obs] {
-			Notes::NoteRecordResolver::LogReadObservation(obs, _log);
+			Notes::NoteRecordResolver::CaptureReadTitleHint(obs);
+			if (_verbose) Notes::NoteRecordResolver::LogReadObservation(obs, _log);
 		});
 		return RE::BSEventNotifyControl::kContinue;
 	}
