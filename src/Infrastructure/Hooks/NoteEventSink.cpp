@@ -65,7 +65,7 @@ namespace F4DH::Infrastructure
 		obs.uniqueID = a_event.uniqueID;
 
 		g_taskInterface->AddTask([this, obs] {
-			Notes::NoteRecordResolver::CaptureReadTitleHint(obs);
+			Notes::NoteRecordResolver::CaptureReadTitleHint(obs, _log);
 			if (_verbose) Notes::NoteRecordResolver::LogReadObservation(obs, _log);
 		});
 		return RE::BSEventNotifyControl::kContinue;

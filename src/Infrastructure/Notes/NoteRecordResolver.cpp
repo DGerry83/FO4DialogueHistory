@@ -19,22 +19,90 @@
 #include "RE/T/TESObjectREFR.hpp"
 #include "RE/T/TESWorldSpace.hpp"
 
-#include <Windows.h>  // GetCurrentThreadId — deferred-task thread confirmation
+#include <Windows.h>
 
 #include <format>
+#include <mutex>
 #include <string>
 #include <string_view>
+#include <type_traits>
+#include <unordered_set>
 #include <utility>
 
 // M1 game-thread probes (see header). Everything here runs on the game
 // thread via the F4SE task interface; engine calls are permitted here and
-// forbidden in the event delivery path. Logging-only — no state survives
-// between calls except one-shot diagnostic flags.
+// forbidden in the event delivery path. Process-lifetime state is limited to
+// title hints and one-shot or deduplicated diagnostics.
 
 namespace
 {
 	constexpr std::size_t kPrefixLen = 72;       // bytes of candidate text per log line (UTF-8 safe prefix may split a sequence; diagnostic only)
 	constexpr std::uint32_t kMaxKeywordsLogged = 6;
+	constexpr DWORD kMsvcCxxException = 0xE06D7363;
+
+	int SehFilter(DWORD a_code) noexcept
+	{
+		return (a_code == EXCEPTION_ACCESS_VIOLATION || a_code == kMsvcCxxException) ?
+			EXCEPTION_EXECUTE_HANDLER :
+			EXCEPTION_CONTINUE_SEARCH;
+	}
+
+	// __try cannot share a function with C++ object unwinding.
+	bool SehCallImpl(void (*a_fn)(void*), void* a_ctx) noexcept
+	{
+		__try {
+			a_fn(a_ctx);
+			return true;
+		} __except (SehFilter(GetExceptionCode())) {
+			return false;
+		}
+	}
+
+	template <class F>
+	bool SehCall(F&& a_fn) noexcept
+	{
+		auto thunk = [](void* a_ctx) { (*static_cast<std::remove_reference_t<F>*>(a_ctx))(); };
+		return SehCallImpl(+thunk, &a_fn);
+	}
+
+	std::mutex g_failedDisplayRefLock;
+	std::unordered_set<std::uint32_t> g_failedDisplayRefs;
+
+	bool HasFailedDisplayRef(std::uint32_t a_formID) noexcept
+	{
+		const std::scoped_lock lock(g_failedDisplayRefLock);
+		return g_failedDisplayRefs.contains(a_formID);
+	}
+
+	bool RememberFailedDisplayRef(std::uint32_t a_formID)
+	{
+		const std::scoped_lock lock(g_failedDisplayRefLock);
+		return g_failedDisplayRefs.insert(a_formID).second;
+	}
+
+	std::optional<std::string> ReferenceDisplayName(const RE::TESObjectREFR& a_refr, F4DH::Core::ILogger& a_log)
+	{
+		if (HasFailedDisplayRef(a_refr.formID)) {
+			return std::nullopt;
+		}
+
+		std::string title;
+		const bool completed = SehCall([&] {
+			const auto display = RE::TESFullName::GetFormFullOrDisplayName(&a_refr);
+			if (display && display->data() && display->data()[0] != '\0') {
+				title = display->data();
+			}
+		});
+		if (completed) {
+			return title.empty() ? std::nullopt : std::optional<std::string>(std::move(title));
+		}
+
+		if (RememberFailedDisplayRef(a_refr.formID)) {
+			a_log.Warn(std::format("note title: reference display-name lookup failed for ref=0x{:08X}; dynamic title suppressed and base-title fallback used where available",
+				a_refr.formID));
+		}
+		return std::nullopt;
+	}
 
 	struct TextStats
 	{
@@ -347,11 +415,11 @@ namespace
 
 	ReadTitleHint g_readTitleHint;
 
-	std::string TitleFor(const RE::TESObjectBOOK& a_book, const RE::TESObjectREFR* a_refr)
+	std::string TitleFor(const RE::TESObjectBOOK& a_book, const RE::TESObjectREFR* a_refr, F4DH::Core::ILogger& a_log)
 	{
 		if (a_refr) {
-			const auto display = RE::TESFullName::GetFormFullOrDisplayName(a_refr);
-			if (display && display->data() && display->data()[0] != '\0') return display->data();
+			auto display = ReferenceDisplayName(*a_refr, a_log);
+			if (display) return *display;
 		}
 		auto title = Safe(a_book.GetFullName());
 		if (!a_refr && g_readTitleHint.baseFormID == a_book.formID &&
@@ -372,7 +440,7 @@ namespace
 
 namespace F4DH::Infrastructure::Notes
 {
-	void NoteRecordResolver::CaptureReadTitleHint(const ReadObservation& a_obs)
+	void NoteRecordResolver::CaptureReadTitleHint(const ReadObservation& a_obs, Core::ILogger& a_log)
 	{
 		g_readTitleHint = {};
 		const auto* refr = ResolveReference(a_obs.bookRefFormID);
@@ -381,7 +449,7 @@ namespace F4DH::Infrastructure::Notes
 		if (!base || !base->Is(RE::FormType::kBook)) return;
 		const auto* book = static_cast<const RE::TESObjectBOOK*>(base);
 		g_readTitleHint.baseFormID = book->formID;
-		g_readTitleHint.title = TitleFor(*book, refr);
+		g_readTitleHint.title = TitleFor(*book, refr, a_log);
 	}
 
 	void NoteRecordResolver::LogReadObservation(const ReadObservation& a_obs, Core::ILogger& a_log)
@@ -518,7 +586,7 @@ namespace F4DH::Infrastructure::Notes
 
 		if (refr) {
 			const auto* base = refr->GetBaseObject();
-			const auto  refDisplay = RE::TESFullName::GetFormFullOrDisplayName(refr);
+			const auto  refDisplay = ReferenceDisplayName(*refr, a_log);
 			a_log.Info(std::format("note probe [seq {}]: bookRef editorID='{}' displayName='{}' base=0x{:08X} baseMatchesEvent={}",
 				a_obs.seq,
 				Safe(refr->GetFormEditorID()),
@@ -624,7 +692,7 @@ namespace F4DH::Infrastructure::Notes
 		}
 
 		if (refr) {
-			const auto refDisplay = RE::TESFullName::GetFormFullOrDisplayName(refr);
+			const auto refDisplay = ReferenceDisplayName(*refr, a_log);
 			a_log.Info(std::format("note probe [bookText {}]: bookRef editorID='{}' displayName='{}'",
 				a_obs.seq, Safe(refr->GetFormEditorID()), refDisplay ? Safe(refDisplay->data()) : std::string("<none>")));
 		}
@@ -648,7 +716,7 @@ namespace F4DH::Infrastructure::Notes
 		const auto* refr = ResolveReference(a_obs.itemRefFormID);
 		Application::NotePickupEvent event;
 		event.identity = IdentityFor(*book, refr, a_obs.uniqueID, HasRawAlias(*book));
-		event.title = TitleFor(*book, refr);
+		event.title = TitleFor(*book, refr, a_log);
 		event.traits = TraitsFor(*book);
 		event.encounter = CurrentEncounter(a_log, Core::EncounterKind::Pickup);
 		return event;
@@ -668,7 +736,7 @@ namespace F4DH::Infrastructure::Notes
 		const bool dynamic = HasRawAlias(*book);
 		Application::NoteReadEvent event;
 		event.identity = IdentityFor(*book, refr, 0, dynamic);
-		event.title = TitleFor(*book, refr);
+		event.title = TitleFor(*book, refr, a_log);
 		event.traits = TraitsFor(*book);
 		event.encounter = CurrentEncounter(a_log, Core::EncounterKind::Read);
 
